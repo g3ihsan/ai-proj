@@ -62,6 +62,11 @@ Request options are intentionally bounded before the solver is called:
 wrapper from accepting ambiguous or unexpectedly expensive solve requests.
 
 `workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
-It exposes `GET /health`, `GET /metadata`, and `POST /solve`. The solve endpoint
-preserves the existing success/error envelope. It does not add persistence,
-workers, auth, websocket delivery, or any new solver behavior.
+It exposes `GET /health`, `GET /metadata`, `POST /solve`, `POST /solve-jobs`,
+and `GET /solve-jobs/{job_id}`. The synchronous solve endpoint preserves the
+existing success/error envelope. The job endpoints are an in-process,
+in-memory prototype for the future async contract only; jobs disappear when the
+process restarts and are not a durable queue. Submitted jobs run in the current
+process through a bounded `ThreadPoolExecutor(max_workers=2)`, not a production
+worker system. The API does not add persistence, auth, websocket delivery, or
+any new solver behavior.

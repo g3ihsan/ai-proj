@@ -34,6 +34,8 @@ HTTP endpoints:
 - `GET /health`
 - `GET /metadata`
 - `POST /solve`
+- `POST /solve-jobs`
+- `GET /solve-jobs/{job_id}`
 
 Run benchmark fixtures:
 
