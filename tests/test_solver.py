@@ -5,6 +5,13 @@ from typing import Dict, List, Tuple
 
 import pytest
 
+from workforce_scheduling.benchmark import (
+    BenchmarkResult,
+    benchmark_cases,
+    format_benchmark_results,
+    run_benchmark_case,
+    run_benchmarks,
+)
 from workforce_scheduling.data import Employee, ProblemData, generate_synthetic_data
 from workforce_scheduling.solve import (
     Assignment,
@@ -183,6 +190,29 @@ def _raw_fairness_value(breakdown: ObjectiveBreakdown) -> int:
     )
 
 
+def _stable_benchmark_tuple(result: BenchmarkResult) -> Tuple[object, ...]:
+    return (
+        result.name,
+        result.status,
+        result.objective_value,
+        result.best_bound,
+        result.num_conflicts,
+        result.num_branches,
+        result.num_variables,
+        result.num_constraints,
+        result.assignment_count,
+        result.total_shortage,
+        result.shortage_objective_value,
+        result.workload_fairness_value,
+        result.weekend_fairness_value,
+        result.shift_distribution_fairness_value,
+        result.fairness_objective_value,
+        result.labor_cost_value,
+        result.total_objective_value,
+        result.validation_violation_count,
+    )
+
+
 def _assert_objective_breakdown_consistent(result: SolveResult) -> None:
     breakdown = result.objective_breakdown
     assert breakdown.total_shortage == sum(result.shortages.values())
@@ -346,6 +376,89 @@ def test_deterministic_solve() -> None:
     )
     _assert_objective_breakdown_consistent(result_a)
     _assert_diagnostics_consistent(data, result_a)
+
+
+def test_benchmark_cases_include_required_scenarios() -> None:
+    names = {case.name for case in benchmark_cases()}
+
+    assert {
+        "small_fully_feasible",
+        "temporal_rest_constrained",
+        "unavoidable_understaffing",
+        "fairness_vs_cost",
+        "synthetic_40_employee_weekly",
+    } == names
+
+
+def test_benchmark_runner_reports_solver_and_objective_baselines() -> None:
+    expected_shortages = {
+        "small_fully_feasible": 0,
+        "temporal_rest_constrained": 1,
+        "unavoidable_understaffing": 1,
+        "fairness_vs_cost": 0,
+    }
+    cases = [
+        case
+        for case in benchmark_cases()
+        if case.name in expected_shortages
+    ]
+
+    results = run_benchmarks(cases)
+
+    assert {result.name for result in results} == set(expected_shortages)
+    for result in results:
+        assert result.status == "OPTIMAL"
+        assert result.validation_violation_count == 0
+        assert result.num_variables > 0
+        assert result.num_constraints > 0
+        assert result.total_shortage == expected_shortages[result.name]
+        assert result.total_objective_value == int(result.objective_value)
+        assert result.total_objective_value == (
+            result.shortage_objective_value
+            + result.fairness_objective_value
+            + result.labor_cost_value
+        )
+
+
+def test_benchmark_runner_is_deterministic_for_small_cases() -> None:
+    cases = [
+        case
+        for case in benchmark_cases()
+        if case.name != "synthetic_40_employee_weekly"
+    ]
+    first_run = run_benchmarks(cases)
+    second_run = run_benchmarks(cases)
+
+    assert [_stable_benchmark_tuple(result) for result in first_run] == [
+        _stable_benchmark_tuple(result) for result in second_run
+    ]
+
+
+def test_synthetic_40_employee_weekly_benchmark_fixture_solves() -> None:
+    case = next(
+        case
+        for case in benchmark_cases()
+        if case.name == "synthetic_40_employee_weekly"
+    )
+    result = run_benchmark_case(case)
+
+    assert result.status in ("OPTIMAL", "FEASIBLE")
+    assert result.validation_violation_count == 0
+    assert result.total_shortage == 0
+    assert result.num_variables > 0
+    assert result.num_constraints > 0
+
+
+def test_benchmark_results_format_is_stable_and_readable() -> None:
+    case = next(
+        case for case in benchmark_cases() if case.name == "small_fully_feasible"
+    )
+    output = format_benchmark_results([run_benchmark_case(case)])
+
+    assert "case" in output
+    assert "status" in output
+    assert "shortage" in output
+    assert "small_fully_feasible" in output
 
 
 def test_shift_length_hours_is_not_part_of_problem_data() -> None:
