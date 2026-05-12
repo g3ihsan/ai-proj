@@ -800,3 +800,164 @@ def test_validator_rejects_invalid_shortage_keys_and_values() -> None:
         "Shortage below zero for key (0, 0, 'worker')" in error
         for error in errors
     )
+
+
+def test_shortage_diagnostics_reports_correct_shortage_slot() -> None:
+    roles = ["worker", "manager"]
+    demand = _build_demand(1, 1, roles)
+    demand[0][0]["worker"] = 2
+    employees = [
+        _make_employee(0, ["worker"], [[True]]),
+        _make_employee(1, ["worker"], [[False]]),
+        _make_employee(2, ["manager"], [[True]]),
+    ]
+    data = _make_problem(
+        employees=employees,
+        roles=roles,
+        shift_start_hours=[8],
+        shift_end_hours=[16],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+    result = solve(data, time_limit_sec=5.0, seed=1)
+
+    assert len(result.shortage_diagnostics) == 1
+    diagnostic = result.shortage_diagnostics[0]
+    assert (diagnostic.day, diagnostic.shift, diagnostic.role) == (0, 0, "worker")
+    assert diagnostic.required_count == 2
+    assert diagnostic.assigned_count == 1
+    assert diagnostic.shortage_count == 1
+    assert diagnostic.assigned_employee_ids == [0]
+    assert diagnostic.candidate_employee_count == 1
+
+
+def test_shortage_diagnostics_identifies_unavailable_and_missing_role() -> None:
+    roles = ["worker", "manager"]
+    demand = _build_demand(1, 1, roles)
+    demand[0][0]["worker"] = 2
+    employees = [
+        _make_employee(0, ["worker"], [[True]]),
+        _make_employee(1, ["worker"], [[False]]),
+        _make_employee(2, ["manager"], [[True]]),
+    ]
+    data = _make_problem(
+        employees=employees,
+        roles=roles,
+        shift_start_hours=[8],
+        shift_end_hours=[16],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+    diagnostic = solve(data, time_limit_sec=5.0, seed=1).shortage_diagnostics[0]
+
+    assert diagnostic.blocked_employee_ids_by_reason["unavailable"] == [1]
+    assert diagnostic.blocked_employee_ids_by_reason["missing_role"] == [2]
+    assert diagnostic.could_work_employee_ids == [0]
+
+
+def test_shortage_diagnostics_identifies_rest_window_blocker() -> None:
+    data = _constrained_rest_window_problem()
+    result = solve(data, time_limit_sec=5.0, seed=1)
+
+    assert len(result.shortage_diagnostics) == 1
+    diagnostic = result.shortage_diagnostics[0]
+    assert diagnostic.blocked_employee_ids_by_reason["violates_minimum_rest"] == [0]
+
+
+def test_shortage_diagnostics_identifies_weekly_hour_blocker() -> None:
+    roles = ["worker"]
+    demand = _build_demand(2, 1, roles, default=1)
+    employee = _make_employee(
+        0,
+        roles,
+        [[True], [True]],
+        max_weekly_hours=8,
+    )
+    data = _make_problem(
+        employees=[employee],
+        roles=roles,
+        shift_start_hours=[8],
+        shift_end_hours=[16],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+    result = solve(data, time_limit_sec=5.0, seed=1)
+
+    assert len(result.shortage_diagnostics) == 1
+    diagnostic = result.shortage_diagnostics[0]
+    assert diagnostic.blocked_employee_ids_by_reason["exceeds_weekly_hours"] == [0]
+
+
+def test_demanded_slot_candidate_analysis_includes_full_coverage_slots() -> None:
+    data = _small_fully_feasible_problem()
+    result = solve(data, time_limit_sec=5.0, seed=1)
+
+    assert len(result.demanded_slot_diagnostics) == 2
+    assert not result.shortage_diagnostics
+    assert all(
+        diagnostic.shortage_count == 0
+        for diagnostic in result.demanded_slot_diagnostics
+    )
+    assert all(
+        diagnostic.required_count == diagnostic.assigned_count
+        for diagnostic in result.demanded_slot_diagnostics
+    )
+
+
+def test_assignment_explanations_calculate_duration_and_labor_cost() -> None:
+    roles = ["worker"]
+    demand = _build_demand(1, 1, roles, default=1)
+    employee = _make_employee(0, roles, [[True]], hourly_cost=25)
+    data = _make_problem(
+        employees=[employee],
+        roles=roles,
+        shift_start_hours=[20],
+        shift_end_hours=[4],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+    result = solve(data, time_limit_sec=5.0, seed=1)
+
+    assert len(result.assignment_explanations) == 1
+    explanation = result.assignment_explanations[0]
+    assert explanation.employee_id == 0
+    assert explanation.shift_duration == 8
+    assert explanation.labor_cost_contribution == 200
+    assert explanation.employee_weekly_hours == 8
+    assert explanation.available
+    assert explanation.qualified
+    assert explanation.within_weekly_hours
+    assert explanation.rest_compatible
+
+
+def test_diagnostics_do_not_change_deterministic_solve_output() -> None:
+    data = _fairness_vs_cost_problem()
+    result_a = solve(data, time_limit_sec=5.0, seed=1)
+    result_b = solve(data, time_limit_sec=5.0, seed=1)
+
+    assert _assignment_tuples(result_a.assignments) == _assignment_tuples(
+        result_b.assignments
+    )
+    assert result_a.shortages == result_b.shortages
+    assert result_a.objective_breakdown == result_b.objective_breakdown
+    assert result_a.shortage_diagnostics == result_b.shortage_diagnostics
+    assert result_a.assignment_explanations == result_b.assignment_explanations
+
+
+def test_objective_breakdown_remains_consistent_with_diagnostics_present() -> None:
+    result = solve(_unavoidable_understaffing_problem(), time_limit_sec=5.0, seed=1)
+
+    assert result.shortage_diagnostics
+    assert result.objective_breakdown.total_shortage == sum(result.shortages.values())
+    assert result.objective_breakdown.total_objective_value == int(
+        result.metrics.objective_value
+    )
+    assert result.objective_breakdown.total_objective_value == (
+        result.objective_breakdown.shortage_objective_value
+        + result.objective_breakdown.fairness_objective_value
+        + result.objective_breakdown.labor_cost_value
+    )

@@ -57,6 +57,35 @@ class ObjectiveBreakdown:
 
 
 @dataclass
+class SlotCandidateAnalysis:
+    day: int
+    shift: int
+    role: str
+    required_count: int
+    assigned_count: int
+    shortage_count: int
+    candidate_employee_count: int
+    assigned_employee_ids: List[int]
+    could_work_employee_ids: List[int]
+    blocked_employee_ids_by_reason: Dict[str, List[int]]
+
+
+@dataclass
+class AssignmentExplanation:
+    employee_id: int
+    day: int
+    shift: int
+    role: str
+    shift_duration: int
+    labor_cost_contribution: int
+    employee_weekly_hours: int
+    available: bool
+    qualified: bool
+    within_weekly_hours: bool
+    rest_compatible: bool
+
+
+@dataclass
 class SolveResult:
     metrics: SolverMetrics
     assignments: List[Assignment]
@@ -67,6 +96,9 @@ class SolveResult:
     constraint_records: List[ConstraintRecord]
     fairness_metrics: FairnessMetrics
     objective_breakdown: ObjectiveBreakdown
+    shortage_diagnostics: List[SlotCandidateAnalysis]
+    demanded_slot_diagnostics: List[SlotCandidateAnalysis]
+    assignment_explanations: List[AssignmentExplanation]
 
 
 def solve(
@@ -128,6 +160,17 @@ def solve(
         shortages,
         objective_metadata,
     )
+    demanded_slot_diagnostics = compute_demanded_slot_diagnostics(
+        data,
+        assignments,
+        shortages,
+    )
+    shortage_diagnostics = [
+        diagnostic
+        for diagnostic in demanded_slot_diagnostics
+        if diagnostic.shortage_count > 0
+    ]
+    assignment_explanations = compute_assignment_explanations(data, assignments)
     violations = []
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         violations = validate_solution(
@@ -147,6 +190,9 @@ def solve(
         constraint_records=artifacts.constraint_records,
         fairness_metrics=fairness_metrics,
         objective_breakdown=objective_breakdown,
+        shortage_diagnostics=shortage_diagnostics,
+        demanded_slot_diagnostics=demanded_slot_diagnostics,
+        assignment_explanations=assignment_explanations,
     )
 
 
@@ -367,6 +413,261 @@ def compute_objective_breakdown(
             + labor_cost_value
         ),
     )
+
+
+def compute_demanded_slot_diagnostics(
+    data: ProblemData,
+    assignments: List[Assignment],
+    shortages: Dict[Tuple[int, int, str], int],
+) -> List[SlotCandidateAnalysis]:
+    assigned_by_slot = _assignments_by_slot(assignments)
+    assigned_by_employee = _assignments_by_employee(assignments)
+    weekly_hours = _assigned_hours_by_employee(data, assignments)
+    diagnostics: List[SlotCandidateAnalysis] = []
+
+    for day in data.days:
+        for shift in range(len(data.shifts)):
+            for role in data.roles:
+                required = data.demand[day][shift][role]
+                if required <= 0:
+                    continue
+                assigned = assigned_by_slot.get((day, shift, role), [])
+                assigned_employee_ids = sorted(
+                    assignment.employee_id for assignment in assigned
+                )
+                blocked_by_reason: Dict[str, List[int]] = {}
+                could_work_employee_ids: List[int] = []
+                candidate_employee_ids: List[int] = []
+
+                for employee in data.employees:
+                    reasons = _blocking_reasons_for_slot(
+                        data,
+                        employee,
+                        day,
+                        shift,
+                        role,
+                        assigned_by_employee,
+                        weekly_hours,
+                    )
+                    if "missing_role" not in reasons and "unavailable" not in reasons:
+                        could_work_employee_ids.append(employee.employee_id)
+                    if not reasons:
+                        candidate_employee_ids.append(employee.employee_id)
+                    for reason in reasons:
+                        blocked_by_reason.setdefault(reason, []).append(
+                            employee.employee_id
+                        )
+
+                diagnostics.append(
+                    SlotCandidateAnalysis(
+                        day=day,
+                        shift=shift,
+                        role=role,
+                        required_count=required,
+                        assigned_count=len(assigned),
+                        shortage_count=shortages.get((day, shift, role), 0),
+                        candidate_employee_count=len(candidate_employee_ids),
+                        assigned_employee_ids=assigned_employee_ids,
+                        could_work_employee_ids=sorted(could_work_employee_ids),
+                        blocked_employee_ids_by_reason={
+                            reason: sorted(employee_ids)
+                            for reason, employee_ids in blocked_by_reason.items()
+                        },
+                    )
+                )
+
+    return diagnostics
+
+
+def compute_assignment_explanations(
+    data: ProblemData,
+    assignments: List[Assignment],
+) -> List[AssignmentExplanation]:
+    employee_index = {employee.employee_id: employee for employee in data.employees}
+    assigned_by_employee = _assignments_by_employee(assignments)
+    weekly_hours = _assigned_hours_by_employee(data, assignments)
+    explanations: List[AssignmentExplanation] = []
+
+    for assignment in assignments:
+        employee = employee_index[assignment.employee_id]
+        duration = shift_duration_hours(
+            data.shift_start_hours,
+            data.shift_end_hours,
+            assignment.shift,
+        )
+        employee_assignments_without_current = [
+            existing
+            for existing in assigned_by_employee[assignment.employee_id]
+            if existing != assignment
+        ]
+        explanations.append(
+            AssignmentExplanation(
+                employee_id=assignment.employee_id,
+                day=assignment.day,
+                shift=assignment.shift,
+                role=assignment.role,
+                shift_duration=duration,
+                labor_cost_contribution=employee.hourly_cost * duration,
+                employee_weekly_hours=weekly_hours[assignment.employee_id],
+                available=_is_available(employee, assignment.day, assignment.shift)
+                and employee.availability[assignment.day][assignment.shift],
+                qualified=assignment.role in employee.roles,
+                within_weekly_hours=(
+                    weekly_hours[assignment.employee_id] <= employee.max_weekly_hours
+                ),
+                rest_compatible=_minimum_rest_compatible(
+                    data,
+                    employee_assignments_without_current,
+                    assignment.day,
+                    assignment.shift,
+                ),
+            )
+        )
+
+    return explanations
+
+
+def _blocking_reasons_for_slot(
+    data: ProblemData,
+    employee: Employee,
+    day: int,
+    shift: int,
+    role: str,
+    assigned_by_employee: Dict[int, List[Assignment]],
+    weekly_hours: Dict[int, int],
+) -> List[str]:
+    reasons: List[str] = []
+    employee_assignments = assigned_by_employee.get(employee.employee_id, [])
+    assigned_same_slot = any(
+        assignment.day == day
+        and assignment.shift == shift
+        and assignment.role == role
+        for assignment in employee_assignments
+    )
+
+    if role not in employee.roles:
+        reasons.append("missing_role")
+    if not _is_available(employee, day, shift) or not employee.availability[day][shift]:
+        reasons.append("unavailable")
+
+    if not assigned_same_slot:
+        if any(assignment.day == day for assignment in employee_assignments):
+            reasons.append("already_working_that_day")
+        if not _minimum_rest_compatible(data, employee_assignments, day, shift):
+            reasons.append("violates_minimum_rest")
+        if not _closing_to_opening_compatible(data, employee_assignments, day, shift):
+            reasons.append("violates_closing_to_opening")
+        if not _max_consecutive_days_compatible(
+            data,
+            employee_assignments,
+            day,
+        ):
+            reasons.append("violates_max_consecutive_days")
+        duration = shift_duration_hours(
+            data.shift_start_hours,
+            data.shift_end_hours,
+            shift,
+        )
+        if weekly_hours.get(employee.employee_id, 0) + duration > employee.max_weekly_hours:
+            reasons.append("exceeds_weekly_hours")
+
+    return reasons
+
+
+def _assignments_by_slot(
+    assignments: List[Assignment],
+) -> Dict[Tuple[int, int, str], List[Assignment]]:
+    by_slot: Dict[Tuple[int, int, str], List[Assignment]] = {}
+    for assignment in assignments:
+        by_slot.setdefault(
+            (assignment.day, assignment.shift, assignment.role),
+            [],
+        ).append(assignment)
+    return by_slot
+
+
+def _assignments_by_employee(
+    assignments: List[Assignment],
+) -> Dict[int, List[Assignment]]:
+    by_employee: Dict[int, List[Assignment]] = {}
+    for assignment in assignments:
+        by_employee.setdefault(assignment.employee_id, []).append(assignment)
+    return by_employee
+
+
+def _minimum_rest_compatible(
+    data: ProblemData,
+    assignments: List[Assignment],
+    day: int,
+    shift: int,
+) -> bool:
+    windows = [
+        (
+            *shift_start_end(
+                data.shift_start_hours,
+                data.shift_end_hours,
+                assignment.day,
+                assignment.shift,
+            ),
+            assignment.day,
+            assignment.shift,
+        )
+        for assignment in assignments
+    ]
+    start, end = shift_start_end(
+        data.shift_start_hours,
+        data.shift_end_hours,
+        day,
+        shift,
+    )
+    windows.append((start, end, day, shift))
+    windows.sort(key=lambda item: item[0])
+    for idx in range(1, len(windows)):
+        _prev_start, prev_end, _prev_day, _prev_shift = windows[idx - 1]
+        current_start, _current_end, _current_day, _current_shift = windows[idx]
+        if current_start - prev_end < data.min_rest_hours:
+            return False
+    return True
+
+
+def _closing_to_opening_compatible(
+    data: ProblemData,
+    assignments: List[Assignment],
+    day: int,
+    shift: int,
+) -> bool:
+    opening_index, closing_index = opening_closing_shift_indices(
+        data.shift_start_hours,
+        data.shift_end_hours,
+    )
+    assigned_slots = {(assignment.day, assignment.shift) for assignment in assignments}
+    assigned_slots.add((day, shift))
+    for assigned_day in data.days[:-1]:
+        if (
+            (assigned_day, closing_index) in assigned_slots
+            and (assigned_day + 1, opening_index) in assigned_slots
+        ):
+            return False
+    return True
+
+
+def _max_consecutive_days_compatible(
+    data: ProblemData,
+    assignments: List[Assignment],
+    day: int,
+) -> bool:
+    worked_days = sorted({assignment.day for assignment in assignments} | {day})
+    consecutive = 0
+    last_day = None
+    for worked_day in worked_days:
+        if last_day is None or worked_day != last_day + 1:
+            consecutive = 1
+        else:
+            consecutive += 1
+        if consecutive > data.max_consecutive_days:
+            return False
+        last_day = worked_day
+    return True
 
 
 def _objective_metadata(metadata: Dict[str, int]) -> Dict[str, int]:
