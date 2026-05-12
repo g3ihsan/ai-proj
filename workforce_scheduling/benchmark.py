@@ -803,9 +803,11 @@ def _relative_optimality_gap_percent(
     objective_value: float | None,
     best_bound: float | None,
 ) -> float | None:
-    absolute_gap = _absolute_optimality_gap(objective_value, best_bound)
-    if absolute_gap is None or objective_value == 0:
+    if objective_value is None or best_bound is None:
         return None
+    if objective_value == 0:
+        return 0 if best_bound == 0 else None
+    absolute_gap = _absolute_optimality_gap(objective_value, best_bound)
     return absolute_gap / abs(objective_value) * 100
 
 

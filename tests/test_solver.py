@@ -720,8 +720,11 @@ def test_benchmark_gap_metrics_handle_solved_and_missing_objectives() -> None:
     assert result.relative_optimality_gap_percent == 0
     assert _absolute_optimality_gap(None, 10.0) is None
     assert _absolute_optimality_gap(10.0, None) is None
+    assert _relative_optimality_gap_percent(None, None) is None
     assert _relative_optimality_gap_percent(None, 10.0) is None
-    assert _relative_optimality_gap_percent(0.0, 0.0) is None
+    assert _relative_optimality_gap_percent(10.0, None) is None
+    assert _relative_optimality_gap_percent(0.0, 0.0) == 0
+    assert _relative_optimality_gap_percent(0.0, 5.0) is None
     assert _relative_optimality_gap_percent(100.0, 90.0) == 10.0
 
 

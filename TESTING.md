@@ -40,3 +40,4 @@ Benchmark interpretation:
 - Use `best_bound`, absolute gap, and relative gap percent to judge remaining optimality uncertainty.
 - Warm-start comparison reports observed facts only; hints can help, hurt, or be neutral.
 - The 80- and 120-employee scaling cases are intended for manual runs, not normal pytest coverage.
+- See `SOLVER_LIMITS.md` for the current benchmark reporting contract and operating-limit notes.
