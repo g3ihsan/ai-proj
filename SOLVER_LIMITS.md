@@ -41,3 +41,7 @@ PYTHONPATH=. python -m workforce_scheduling.benchmark --scaling
 The benchmark runner must not change solver decisions. It only reports solve
 status, objective components, validation counts, search metrics, and warm-start
 comparison facts.
+
+`workforce_scheduling.schemas` provides a JSON-safe request/response boundary
+for future service integration. It is an in-process schema adapter only; this
+project still does not include an HTTP API, database, queue, worker, or frontend.

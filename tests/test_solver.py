@@ -35,6 +35,12 @@ from workforce_scheduling.solve import (
     solve,
     validate_solution,
 )
+from workforce_scheduling.schemas import (
+    parse_solve_request,
+    solve_payload,
+    solve_request_to_payload,
+    solve_result_to_payload,
+)
 from workforce_scheduling.warm_start import (
     build_warm_start_hints,
     with_warm_start_hints,
@@ -351,6 +357,16 @@ def _assert_benchmark_comparisons_payload_valid(payload: Dict[str, object]) -> N
 
     assert summary["objective_changed_cases"] == objective_changed_cases
     assert summary["validation_violation_cases"] == validation_violation_cases
+
+
+def _assert_json_object_keys_are_strings(value: object) -> None:
+    if isinstance(value, dict):
+        assert all(isinstance(key, str) for key in value)
+        for item in value.values():
+            _assert_json_object_keys_are_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            _assert_json_object_keys_are_strings(item)
 
 
 def _run_benchmark_cli_json(*args: str) -> Dict[str, object]:
@@ -828,6 +844,117 @@ def test_benchmark_cli_comparison_json_output_is_complete_and_consistent() -> No
 
     _assert_benchmark_comparisons_payload_valid(payload)
     assert payload["comparisons"][0]["name"] == "small_fully_feasible"
+
+
+def test_solve_request_schema_round_trips_problem_data_as_json_safe_payload() -> None:
+    data = _small_fully_feasible_problem()
+    data.hint_assignments = {(0, 0, 0, "worker"): 1}
+    payload = solve_request_to_payload(data, time_limit_sec=3.5, seed=9)
+
+    _assert_json_object_keys_are_strings(payload)
+    encoded_payload = json.loads(json.dumps(payload))
+    request = parse_solve_request(encoded_payload)
+
+    assert request.options.time_limit_sec == 3.5
+    assert request.options.seed == 9
+    assert request.problem.roles == data.roles
+    assert request.problem.days == data.days
+    assert request.problem.shifts == data.shifts
+    assert request.problem.shift_start_hours == data.shift_start_hours
+    assert request.problem.shift_end_hours == data.shift_end_hours
+    assert request.problem.demand == data.demand
+    assert request.problem.hint_assignments == data.hint_assignments
+    assert request.problem.employees[0].roles == data.employees[0].roles
+
+
+def test_solve_response_schema_is_json_safe_and_preserves_solver_components() -> None:
+    result = solve(_small_fully_feasible_problem(), time_limit_sec=5.0, seed=1)
+    payload = solve_result_to_payload(result)
+
+    _assert_json_object_keys_are_strings(payload)
+    encoded_payload = json.loads(json.dumps(payload))
+
+    assert encoded_payload["schema_version"] == 1
+    assert encoded_payload["metrics"]["status"] == result.metrics.status
+    assert encoded_payload["objective_breakdown"] == {
+        "total_shortage": result.objective_breakdown.total_shortage,
+        "shortage_objective_value": (
+            result.objective_breakdown.shortage_objective_value
+        ),
+        "workload_fairness_value": (
+            result.objective_breakdown.workload_fairness_value
+        ),
+        "weekend_fairness_value": result.objective_breakdown.weekend_fairness_value,
+        "shift_distribution_fairness_value": (
+            result.objective_breakdown.shift_distribution_fairness_value
+        ),
+        "fairness_objective_value": (
+            result.objective_breakdown.fairness_objective_value
+        ),
+        "labor_cost_value": result.objective_breakdown.labor_cost_value,
+        "total_objective_value": result.objective_breakdown.total_objective_value,
+    }
+    assert encoded_payload["shortages"] == [
+        {"day": 0, "shift": 0, "role": "worker", "shortage_count": 0},
+        {"day": 1, "shift": 0, "role": "worker", "shortage_count": 0},
+    ]
+    assert encoded_payload["fairness_metrics"]["shift_counts_per_employee_shift"] == [
+        {"employee_id": 0, "shift": 0, "assignment_count": 1},
+        {"employee_id": 1, "shift": 0, "assignment_count": 1},
+    ]
+
+
+def test_solve_payload_boundary_matches_direct_solver_output() -> None:
+    data = _small_fully_feasible_problem()
+    request_payload = solve_request_to_payload(data, time_limit_sec=5.0, seed=1)
+    response_payload = solve_payload(json.loads(json.dumps(request_payload)))
+    direct_result = solve(data, time_limit_sec=5.0, seed=1)
+
+    assert response_payload["assignments"] == [
+        {
+            "employee_id": assignment.employee_id,
+            "day": assignment.day,
+            "shift": assignment.shift,
+            "role": assignment.role,
+        }
+        for assignment in sorted(
+            direct_result.assignments,
+            key=lambda item: (item.employee_id, item.day, item.shift, item.role),
+        )
+    ]
+    assert response_payload["objective_breakdown"] == {
+        "total_shortage": direct_result.objective_breakdown.total_shortage,
+        "shortage_objective_value": (
+            direct_result.objective_breakdown.shortage_objective_value
+        ),
+        "workload_fairness_value": (
+            direct_result.objective_breakdown.workload_fairness_value
+        ),
+        "weekend_fairness_value": (
+            direct_result.objective_breakdown.weekend_fairness_value
+        ),
+        "shift_distribution_fairness_value": (
+            direct_result.objective_breakdown.shift_distribution_fairness_value
+        ),
+        "fairness_objective_value": (
+            direct_result.objective_breakdown.fairness_objective_value
+        ),
+        "labor_cost_value": direct_result.objective_breakdown.labor_cost_value,
+        "total_objective_value": (
+            direct_result.objective_breakdown.total_objective_value
+        ),
+    }
+    assert response_payload["violations"] == []
+
+
+def test_problem_schema_rejects_duplicate_demand_records() -> None:
+    payload = solve_request_to_payload(_small_fully_feasible_problem())
+    payload["problem"]["demand"].append(dict(payload["problem"]["demand"][0]))
+
+    with pytest.raises(ValueError) as exc_info:
+        parse_solve_request(payload)
+
+    assert "Duplicate demand record" in str(exc_info.value)
 
 
 def test_shift_length_hours_is_not_part_of_problem_data() -> None:
