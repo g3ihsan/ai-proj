@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 
@@ -45,6 +46,13 @@ def _wait_for_terminal_job(status_url: str) -> httpx.Response:
         time.sleep(0.05)
         response = _api_request("GET", status_url)
     return response
+
+
+def _assert_utc_iso_timestamp(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    assert parsed.tzinfo is not None
+    assert parsed.utcoffset() == timezone.utc.utcoffset(parsed)
+    return parsed
 
 
 def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
@@ -109,19 +117,30 @@ def test_api_solve_job_boundary_returns_submitted_job_and_result() -> None:
     assert submit_response.status_code == 202
     assert submit_payload["ok"] is True
     assert submit_payload["job"]["status"] == "queued"
+    assert submit_payload["job"]["started_at"] is None
+    assert submit_payload["job"]["finished_at"] is None
+    assert submit_payload["job"]["duration_sec"] is None
     assert submit_payload["status_url"] == (
         f"/solve-jobs/{submit_payload['job']['job_id']}"
     )
+    _assert_utc_iso_timestamp(submit_payload["job"]["created_at"])
+    _assert_utc_iso_timestamp(submit_payload["job"]["updated_at"])
 
     status_response = _wait_for_terminal_job(submit_payload["status_url"])
     status_payload = status_response.json()
+    finished_job = status_payload["job"]
 
     assert status_response.status_code == 200
     assert status_payload["ok"] is True
-    assert status_payload["job"]["job_id"] == submit_payload["job"]["job_id"]
-    assert status_payload["job"]["status"] == "succeeded"
-    assert status_payload["job"]["result"]["metrics"]["status"] == "OPTIMAL"
-    assert status_payload["job"]["result"]["objective_breakdown"]["total_shortage"] == 0
+    assert finished_job["job_id"] == submit_payload["job"]["job_id"]
+    assert finished_job["status"] == "succeeded"
+    assert finished_job["result"]["metrics"]["status"] == "OPTIMAL"
+    assert finished_job["result"]["objective_breakdown"]["total_shortage"] == 0
+    started_at = _assert_utc_iso_timestamp(finished_job["started_at"])
+    finished_at = _assert_utc_iso_timestamp(finished_job["finished_at"])
+    assert finished_at >= started_at
+    assert isinstance(finished_job["duration_sec"], float)
+    assert finished_job["duration_sec"] >= 0
 
 
 def test_api_solve_job_boundary_records_schema_errors_as_failed_jobs() -> None:
@@ -139,6 +158,10 @@ def test_api_solve_job_boundary_records_schema_errors_as_failed_jobs() -> None:
     assert submit_response.status_code == 202
     assert status_response.status_code == 200
     assert status_payload["job"]["status"] == "failed"
+    _assert_utc_iso_timestamp(status_payload["job"]["started_at"])
+    _assert_utc_iso_timestamp(status_payload["job"]["finished_at"])
+    assert isinstance(status_payload["job"]["duration_sec"], float)
+    assert status_payload["job"]["duration_sec"] >= 0
     assert status_payload["job"]["error"] == {
         "type": "SchemaValidationError",
         "message": "Solve request must contain a problem object",

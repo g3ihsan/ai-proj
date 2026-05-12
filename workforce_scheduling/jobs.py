@@ -32,6 +32,9 @@ class SolveJob:
     status: str
     created_at: str
     updated_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    duration_sec: float | None = None
     result: Dict[str, Any] | None = None
     error: Dict[str, Any] | None = None
 
@@ -61,20 +64,38 @@ class InMemorySolveJobStore:
         return job
 
     def mark_running(self, job_id: str) -> SolveJob:
-        return self._replace(job_id, status=JOB_RUNNING)
+        now = _utc_now()
+        return self._replace(
+            job_id,
+            status=JOB_RUNNING,
+            updated_at=now,
+            started_at=now,
+            finished_at=None,
+            duration_sec=None,
+        )
 
     def mark_succeeded(self, job_id: str, result: Mapping[str, Any]) -> SolveJob:
+        finished_at = _utc_now()
+        current = self.get(job_id)
         return self._replace(
             job_id,
             status=JOB_SUCCEEDED,
+            updated_at=finished_at,
+            finished_at=finished_at,
+            duration_sec=_duration_seconds(current.started_at, finished_at),
             result=deepcopy(dict(result)),
             error=None,
         )
 
     def mark_failed(self, job_id: str, error: Mapping[str, Any]) -> SolveJob:
+        finished_at = _utc_now()
+        current = self.get(job_id)
         return self._replace(
             job_id,
             status=JOB_FAILED,
+            updated_at=finished_at,
+            finished_at=finished_at,
+            duration_sec=_duration_seconds(current.started_at, finished_at),
             result=None,
             error=deepcopy(dict(error)),
         )
@@ -92,7 +113,10 @@ class InMemorySolveJobStore:
                 job_id=current.job_id,
                 status=changes.get("status", current.status),
                 created_at=current.created_at,
-                updated_at=_utc_now(),
+                updated_at=changes.get("updated_at", _utc_now()),
+                started_at=changes.get("started_at", current.started_at),
+                finished_at=changes.get("finished_at", current.finished_at),
+                duration_sec=changes.get("duration_sec", current.duration_sec),
                 result=changes.get("result", current.result),
                 error=changes.get("error", current.error),
             )
@@ -141,6 +165,9 @@ def job_payload(job: SolveJob) -> Dict[str, Any]:
         "status": job.status,
         "created_at": job.created_at,
         "updated_at": job.updated_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+        "duration_sec": job.duration_sec,
     }
     if job.result is not None:
         payload["result"] = deepcopy(job.result)
@@ -151,3 +178,14 @@ def job_payload(job: SolveJob) -> Dict[str, Any]:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _duration_seconds(
+    started_at: str | None,
+    finished_at: str | None,
+) -> float | None:
+    if started_at is None or finished_at is None:
+        return None
+    started = datetime.fromisoformat(started_at)
+    finished = datetime.fromisoformat(finished_at)
+    return max(0.0, (finished - started).total_seconds())
