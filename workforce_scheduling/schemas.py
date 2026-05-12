@@ -61,13 +61,30 @@ def parse_solve_request(payload: Mapping[str, Any]) -> SolveRequest:
 
 
 def solve_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
-    request = parse_solve_request(payload)
-    result = solve(
-        request.problem,
-        time_limit_sec=request.options.time_limit_sec,
-        seed=request.options.seed,
-    )
-    return solve_result_to_payload(result)
+    try:
+        request = parse_solve_request(payload)
+        result = solve(
+            request.problem,
+            time_limit_sec=request.options.time_limit_sec,
+            seed=request.options.seed,
+        )
+    except Exception as exc:
+        return error_payload(exc)
+
+    return {
+        "ok": True,
+        "result": solve_result_to_payload(result),
+    }
+
+
+def error_payload(exc: Exception) -> Dict[str, Any]:
+    return {
+        "ok": False,
+        "error": {
+            "type": exc.__class__.__name__,
+            "message": str(exc),
+        },
+    }
 
 
 def problem_data_to_payload(data: ProblemData) -> Dict[str, Any]:

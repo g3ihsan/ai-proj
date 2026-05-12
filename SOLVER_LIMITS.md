@@ -45,3 +45,6 @@ comparison facts.
 `workforce_scheduling.schemas` provides a JSON-safe request/response boundary
 for future service integration. It is an in-process schema adapter only; this
 project still does not include an HTTP API, database, queue, worker, or frontend.
+`solve_payload(...)` returns a stable envelope: `{"ok": true, "result": ...}`
+for processed solve requests and `{"ok": false, "error": ...}` for malformed
+requests or solver input errors.

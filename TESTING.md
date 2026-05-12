@@ -12,6 +12,12 @@ Run tests:
 PYTHONPATH=. pytest -q
 ```
 
+Run a JSON solve request through the file boundary:
+
+```bash
+PYTHONPATH=. python -m workforce_scheduling.cli --request-json request.json --response-json response.json
+```
+
 Run benchmark fixtures:
 
 ```bash

@@ -370,6 +370,11 @@ def _assert_json_object_keys_are_strings(value: object) -> None:
 
 
 def _run_benchmark_cli_json(*args: str) -> Dict[str, object]:
+    completed = _run_module("workforce_scheduling.benchmark", *args)
+    return json.loads(completed.stdout)
+
+
+def _run_module(module_name: str, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     cwd = os.getcwd()
     current_pythonpath = env.get("PYTHONPATH")
@@ -378,15 +383,14 @@ def _run_benchmark_cli_json(*args: str) -> Dict[str, object]:
         if not current_pythonpath
         else os.pathsep.join([cwd, current_pythonpath])
     )
-    completed = subprocess.run(
-        [sys.executable, "-m", "workforce_scheduling.benchmark", *args],
+    return subprocess.run(
+        [sys.executable, "-m", module_name, *args],
         check=True,
         cwd=cwd,
         env=env,
         capture_output=True,
         text=True,
     )
-    return json.loads(completed.stdout)
 
 
 def _assert_objective_breakdown_consistent(result: SolveResult) -> None:
@@ -907,9 +911,11 @@ def test_solve_response_schema_is_json_safe_and_preserves_solver_components() ->
 def test_solve_payload_boundary_matches_direct_solver_output() -> None:
     data = _small_fully_feasible_problem()
     request_payload = solve_request_to_payload(data, time_limit_sec=5.0, seed=1)
-    response_payload = solve_payload(json.loads(json.dumps(request_payload)))
+    response_envelope = solve_payload(json.loads(json.dumps(request_payload)))
+    response_payload = response_envelope["result"]
     direct_result = solve(data, time_limit_sec=5.0, seed=1)
 
+    assert response_envelope["ok"]
     assert response_payload["assignments"] == [
         {
             "employee_id": assignment.employee_id,
@@ -945,6 +951,77 @@ def test_solve_payload_boundary_matches_direct_solver_output() -> None:
         ),
     }
     assert response_payload["violations"] == []
+
+
+def test_solve_payload_returns_error_envelope_for_invalid_request() -> None:
+    response_payload = solve_payload({"options": {"seed": 1}})
+
+    assert response_payload == {
+        "ok": False,
+        "error": {
+            "type": "ValueError",
+            "message": "Solve request must contain a problem object",
+        },
+    }
+
+
+def test_cli_request_json_writes_response_envelope(tmp_path) -> None:
+    request_path = tmp_path / "request.json"
+    response_path = tmp_path / "response.json"
+    request_path.write_text(
+        json.dumps(
+            solve_request_to_payload(
+                _small_fully_feasible_problem(),
+                time_limit_sec=5.0,
+                seed=1,
+            )
+        )
+    )
+
+    _run_module(
+        "workforce_scheduling.cli",
+        "--request-json",
+        str(request_path),
+        "--response-json",
+        str(response_path),
+    )
+    response_payload = json.loads(response_path.read_text())
+
+    assert response_payload["ok"]
+    assert response_payload["result"]["metrics"]["status"] == "OPTIMAL"
+    assert response_payload["result"]["objective_breakdown"]["total_shortage"] == 0
+
+
+def test_cli_request_json_writes_error_envelope_for_invalid_json(tmp_path) -> None:
+    request_path = tmp_path / "request.json"
+    response_path = tmp_path / "response.json"
+    request_path.write_text("{")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "workforce_scheduling.cli",
+            "--request-json",
+            str(request_path),
+            "--response-json",
+            str(response_path),
+        ],
+        cwd=os.getcwd(),
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(
+                [os.getcwd(), os.environ.get("PYTHONPATH", "")]
+            ),
+        },
+        capture_output=True,
+        text=True,
+    )
+    response_payload = json.loads(response_path.read_text())
+
+    assert completed.returncode == 1
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "JSONDecodeError"
 
 
 def test_problem_schema_rejects_duplicate_demand_records() -> None:
