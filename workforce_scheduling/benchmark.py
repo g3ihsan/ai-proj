@@ -6,6 +6,7 @@ from typing import Callable, Dict, Iterable, List
 
 from .data import Employee, ProblemData, generate_synthetic_data
 from .solve import SolveResult, solve
+from .warm_start import with_warm_start_hints, without_hints
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,8 @@ class BenchmarkCase:
 @dataclass(frozen=True)
 class BenchmarkResult:
     name: str
+    warm_start_enabled: bool
+    hint_count: int
     status: str
     objective_value: float | None
     best_bound: float | None
@@ -38,6 +41,13 @@ class BenchmarkResult:
     labor_cost_value: int
     total_objective_value: int
     validation_violation_count: int
+
+
+@dataclass(frozen=True)
+class BenchmarkComparison:
+    name: str
+    baseline: BenchmarkResult
+    warm_start: BenchmarkResult
 
 
 def benchmark_cases() -> List[BenchmarkCase]:
@@ -149,25 +159,60 @@ def synthetic_40_employee_weekly_case() -> ProblemData:
     )
 
 
-def run_benchmark_case(case: BenchmarkCase) -> BenchmarkResult:
+def run_benchmark_case(
+    case: BenchmarkCase,
+    *,
+    warm_start: bool = True,
+) -> BenchmarkResult:
+    data = case.data_factory()
+    if warm_start:
+        data = with_warm_start_hints(data)
+    else:
+        data = without_hints(data)
     result = solve(
-        case.data_factory(),
+        data,
         time_limit_sec=case.time_limit_sec,
         seed=case.seed,
     )
-    return _result_from_solve(case.name, result)
+    return _result_from_solve(
+        case.name,
+        result,
+        warm_start_enabled=warm_start,
+        hint_count=len(data.hint_assignments),
+    )
 
 
 def run_benchmarks(
     cases: Iterable[BenchmarkCase] | None = None,
+    *,
+    warm_start: bool = True,
 ) -> List[BenchmarkResult]:
     selected_cases = list(cases) if cases is not None else benchmark_cases()
-    return [run_benchmark_case(case) for case in selected_cases]
+    return [
+        run_benchmark_case(case, warm_start=warm_start)
+        for case in selected_cases
+    ]
+
+
+def run_benchmark_comparisons(
+    cases: Iterable[BenchmarkCase] | None = None,
+) -> List[BenchmarkComparison]:
+    selected_cases = list(cases) if cases is not None else benchmark_cases()
+    return [
+        BenchmarkComparison(
+            name=case.name,
+            baseline=run_benchmark_case(case, warm_start=False),
+            warm_start=run_benchmark_case(case, warm_start=True),
+        )
+        for case in selected_cases
+    ]
 
 
 def format_benchmark_results(results: List[BenchmarkResult]) -> str:
     headers = [
         "case",
+        "warm_start",
+        "hints",
         "status",
         "objective",
         "shortage",
@@ -182,6 +227,8 @@ def format_benchmark_results(results: List[BenchmarkResult]) -> str:
     rows = [
         [
             result.name,
+            "yes" if result.warm_start_enabled else "no",
+            str(result.hint_count),
             result.status,
             _format_objective(result.objective_value),
             str(result.total_shortage),
@@ -220,6 +267,55 @@ def format_benchmark_results(results: List[BenchmarkResult]) -> str:
     return "\n".join(lines)
 
 
+def format_benchmark_comparisons(comparisons: List[BenchmarkComparison]) -> str:
+    headers = [
+        "case",
+        "base_status",
+        "warm_status",
+        "base_obj",
+        "warm_obj",
+        "base_branches",
+        "warm_branches",
+        "base_conflicts",
+        "warm_conflicts",
+        "warm_hints",
+    ]
+    rows = [
+        [
+            comparison.name,
+            comparison.baseline.status,
+            comparison.warm_start.status,
+            _format_objective(comparison.baseline.objective_value),
+            _format_objective(comparison.warm_start.objective_value),
+            str(comparison.baseline.num_branches),
+            str(comparison.warm_start.num_branches),
+            str(comparison.baseline.num_conflicts),
+            str(comparison.warm_start.num_conflicts),
+            str(comparison.warm_start.hint_count),
+        ]
+        for comparison in comparisons
+    ]
+    widths = [
+        max(len(row[idx]) for row in [headers, *rows])
+        for idx in range(len(headers))
+    ]
+    lines = [
+        "  ".join(
+            value.ljust(widths[idx])
+            for idx, value in enumerate(headers)
+        )
+    ]
+    lines.append("  ".join("-" * width for width in widths))
+    lines.extend(
+        "  ".join(
+            value.ljust(widths[idx])
+            for idx, value in enumerate(row)
+        )
+        for row in rows
+    )
+    return "\n".join(lines)
+
+
 def main() -> int:
     parser = ArgumentParser(
         description="Run deterministic workforce solver benchmark fixtures."
@@ -230,6 +326,16 @@ def main() -> int:
         choices=[case.name for case in benchmark_cases()],
         help="Benchmark case name. May be passed more than once.",
     )
+    parser.add_argument(
+        "--no-warm-start",
+        action="store_true",
+        help="Run benchmark fixtures without generated warm-start hints.",
+    )
+    parser.add_argument(
+        "--compare-warm-start",
+        action="store_true",
+        help="Run each fixture without and with warm-start hints.",
+    )
     args = parser.parse_args()
 
     cases = benchmark_cases()
@@ -237,15 +343,36 @@ def main() -> int:
         requested = set(args.case)
         cases = [case for case in cases if case.name in requested]
 
-    results = run_benchmarks(cases)
+    if args.compare_warm_start:
+        comparisons = run_benchmark_comparisons(cases)
+        print(format_benchmark_comparisons(comparisons))
+        return 0 if all(
+            comparison.baseline.status in ("OPTIMAL", "FEASIBLE")
+            and comparison.warm_start.status in ("OPTIMAL", "FEASIBLE")
+            for comparison in comparisons
+        ) else 1
+
+    results = run_benchmarks(cases, warm_start=not args.no_warm_start)
     print(format_benchmark_results(results))
-    return 0 if all(result.status in ("OPTIMAL", "FEASIBLE") for result in results) else 1
+    return (
+        0
+        if all(result.status in ("OPTIMAL", "FEASIBLE") for result in results)
+        else 1
+    )
 
 
-def _result_from_solve(name: str, result: SolveResult) -> BenchmarkResult:
+def _result_from_solve(
+    name: str,
+    result: SolveResult,
+    *,
+    warm_start_enabled: bool,
+    hint_count: int,
+) -> BenchmarkResult:
     breakdown = result.objective_breakdown
     return BenchmarkResult(
         name=name,
+        warm_start_enabled=warm_start_enabled,
+        hint_count=hint_count,
         status=result.metrics.status,
         objective_value=result.metrics.objective_value,
         best_bound=result.metrics.best_bound,

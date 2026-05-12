@@ -8,8 +8,10 @@ import pytest
 from workforce_scheduling.benchmark import (
     BenchmarkResult,
     benchmark_cases,
+    format_benchmark_comparisons,
     format_benchmark_results,
     run_benchmark_case,
+    run_benchmark_comparisons,
     run_benchmarks,
 )
 from workforce_scheduling.data import Employee, ProblemData, generate_synthetic_data
@@ -20,6 +22,11 @@ from workforce_scheduling.solve import (
     compute_objective_breakdown,
     solve,
     validate_solution,
+)
+from workforce_scheduling.warm_start import (
+    build_warm_start_hints,
+    with_warm_start_hints,
+    without_hints,
 )
 
 
@@ -193,6 +200,8 @@ def _raw_fairness_value(breakdown: ObjectiveBreakdown) -> int:
 def _stable_benchmark_tuple(result: BenchmarkResult) -> Tuple[object, ...]:
     return (
         result.name,
+        result.warm_start_enabled,
+        result.hint_count,
         result.status,
         result.objective_value,
         result.best_bound,
@@ -378,6 +387,70 @@ def test_deterministic_solve() -> None:
     _assert_diagnostics_consistent(data, result_a)
 
 
+def test_gitignore_excludes_python_test_artifacts() -> None:
+    with open(".gitignore") as handle:
+        patterns = set(handle.read().splitlines())
+
+    assert {
+        "__pycache__/",
+        "*.pyc",
+        ".pytest_cache/",
+        ".venv/",
+        "venv/",
+    }.issubset(patterns)
+
+
+def test_warm_start_hints_are_deterministic_and_valid() -> None:
+    data = _constrained_rest_window_problem()
+    hints_a = build_warm_start_hints(data)
+    hints_b = build_warm_start_hints(data)
+    hinted_assignments = [
+        Assignment(employee_id=employee_id, day=day, shift=shift, role=role)
+        for employee_id, day, shift, role in hints_a
+        if hints_a[(employee_id, day, shift, role)] == 1
+    ]
+
+    assert hints_a == hints_b
+    assert len(hints_a) == 1
+    assert not validate_solution(
+        data,
+        hinted_assignments,
+        _shortages_for_assignments(data, hinted_assignments),
+    )
+
+
+def test_warm_start_preserves_existing_hints_without_unioning_rosters() -> None:
+    data = _small_fully_feasible_problem()
+    data.hint_assignments = {(0, 0, 0, "worker"): 1}
+
+    hinted = with_warm_start_hints(data)
+
+    assert hinted.hint_assignments == data.hint_assignments
+    assert hinted is not data
+
+
+def test_warm_start_hints_do_not_change_optimal_objective_priority() -> None:
+    for data in (
+        _small_fully_feasible_problem(),
+        _constrained_rest_window_problem(),
+        _unavoidable_understaffing_problem(),
+        _fairness_vs_cost_problem(),
+    ):
+        baseline = solve(without_hints(data), time_limit_sec=5.0, seed=1)
+        hinted = solve(
+            with_warm_start_hints(data, preserve_existing=False),
+            time_limit_sec=5.0,
+            seed=1,
+        )
+
+        assert baseline.metrics.status == "OPTIMAL"
+        assert hinted.metrics.status == "OPTIMAL"
+        assert baseline.objective_breakdown == hinted.objective_breakdown
+        assert baseline.shortages == hinted.shortages
+        assert not baseline.violations
+        assert not hinted.violations
+
+
 def test_benchmark_cases_include_required_scenarios() -> None:
     names = {case.name for case in benchmark_cases()}
 
@@ -408,6 +481,8 @@ def test_benchmark_runner_reports_solver_and_objective_baselines() -> None:
     assert {result.name for result in results} == set(expected_shortages)
     for result in results:
         assert result.status == "OPTIMAL"
+        assert result.warm_start_enabled
+        assert result.hint_count > 0
         assert result.validation_violation_count == 0
         assert result.num_variables > 0
         assert result.num_constraints > 0
@@ -457,8 +532,34 @@ def test_benchmark_results_format_is_stable_and_readable() -> None:
 
     assert "case" in output
     assert "status" in output
+    assert "warm_start" in output
     assert "shortage" in output
     assert "small_fully_feasible" in output
+
+
+def test_benchmark_comparison_reports_unhinted_and_warm_started_runs() -> None:
+    cases = [
+        case
+        for case in benchmark_cases()
+        if case.name != "synthetic_40_employee_weekly"
+    ]
+    comparisons = run_benchmark_comparisons(cases)
+    output = format_benchmark_comparisons(comparisons)
+
+    assert "base_status" in output
+    assert "warm_status" in output
+    assert len(comparisons) == len(cases)
+    for comparison in comparisons:
+        assert not comparison.baseline.warm_start_enabled
+        assert comparison.baseline.hint_count == 0
+        assert comparison.warm_start.warm_start_enabled
+        assert comparison.warm_start.hint_count > 0
+        assert comparison.baseline.status == "OPTIMAL"
+        assert comparison.warm_start.status == "OPTIMAL"
+        assert (
+            comparison.baseline.objective_value
+            == comparison.warm_start.objective_value
+        )
 
 
 def test_shift_length_hours_is_not_part_of_problem_data() -> None:

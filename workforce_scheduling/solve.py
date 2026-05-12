@@ -120,6 +120,9 @@ def solve(
     solver.parameters.random_seed = seed
     solver.parameters.num_search_workers = 1
     solver.parameters.randomize_search = False
+    if data.hint_assignments:
+        solver.parameters.repair_hint = True
+        solver.parameters.hint_conflict_limit = 1000
 
     status = solver.Solve(model)
     status_name = solver.StatusName(status)
