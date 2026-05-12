@@ -11,6 +11,7 @@ from .solve import (
     SolveResult,
     solve,
 )
+from .warm_start import with_warm_start_hints
 
 
 SCHEMA_VERSION = 1
@@ -20,6 +21,7 @@ SCHEMA_VERSION = 1
 class SolveOptions:
     time_limit_sec: float = 10.0
     seed: int = 1
+    use_warm_start: bool = False
 
 
 @dataclass(frozen=True)
@@ -33,11 +35,18 @@ def solve_request_to_payload(
     *,
     time_limit_sec: float = 10.0,
     seed: int = 1,
+    use_warm_start: bool = False,
 ) -> Dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "problem": problem_data_to_payload(data),
-        "options": asdict(SolveOptions(time_limit_sec=time_limit_sec, seed=seed)),
+        "options": asdict(
+            SolveOptions(
+                time_limit_sec=time_limit_sec,
+                seed=seed,
+                use_warm_start=use_warm_start,
+            )
+        ),
     }
 
 
@@ -53,6 +62,7 @@ def parse_solve_request(payload: Mapping[str, Any]) -> SolveRequest:
     options = SolveOptions(
         time_limit_sec=float(options_payload.get("time_limit_sec", 10.0)),
         seed=int(options_payload.get("seed", 1)),
+        use_warm_start=_bool_option(options_payload, "use_warm_start", False),
     )
     return SolveRequest(
         problem=problem_data_from_payload(problem_payload),
@@ -63,8 +73,13 @@ def parse_solve_request(payload: Mapping[str, Any]) -> SolveRequest:
 def solve_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
     try:
         request = parse_solve_request(payload)
+        problem = (
+            with_warm_start_hints(request.problem)
+            if request.options.use_warm_start
+            else request.problem
+        )
         result = solve(
-            request.problem,
+            problem,
             time_limit_sec=request.options.time_limit_sec,
             seed=request.options.seed,
         )
@@ -85,6 +100,17 @@ def error_payload(exc: Exception) -> Dict[str, Any]:
             "message": str(exc),
         },
     }
+
+
+def _bool_option(
+    payload: Mapping[str, Any],
+    key: str,
+    default: bool,
+) -> bool:
+    value = payload.get(key, default)
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"Solve option {key} must be a boolean")
 
 
 def problem_data_to_payload(data: ProblemData) -> Dict[str, Any]:

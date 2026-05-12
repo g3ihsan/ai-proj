@@ -48,3 +48,7 @@ project still does not include an HTTP API, database, queue, worker, or frontend
 `solve_payload(...)` returns a stable envelope: `{"ok": true, "result": ...}`
 for processed solve requests and `{"ok": false, "error": ...}` for malformed
 requests or solver input errors.
+Solve request options include `use_warm_start`, which defaults to `false`.
+When set to `true`, the boundary uses the existing deterministic warm-start
+hint generator only; it does not add objectives, constraints, or different
+optimization behavior.

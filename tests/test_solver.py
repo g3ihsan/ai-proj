@@ -853,7 +853,12 @@ def test_benchmark_cli_comparison_json_output_is_complete_and_consistent() -> No
 def test_solve_request_schema_round_trips_problem_data_as_json_safe_payload() -> None:
     data = _small_fully_feasible_problem()
     data.hint_assignments = {(0, 0, 0, "worker"): 1}
-    payload = solve_request_to_payload(data, time_limit_sec=3.5, seed=9)
+    payload = solve_request_to_payload(
+        data,
+        time_limit_sec=3.5,
+        seed=9,
+        use_warm_start=True,
+    )
 
     _assert_json_object_keys_are_strings(payload)
     encoded_payload = json.loads(json.dumps(payload))
@@ -861,6 +866,7 @@ def test_solve_request_schema_round_trips_problem_data_as_json_safe_payload() ->
 
     assert request.options.time_limit_sec == 3.5
     assert request.options.seed == 9
+    assert request.options.use_warm_start
     assert request.problem.roles == data.roles
     assert request.problem.days == data.days
     assert request.problem.shifts == data.shifts
@@ -869,6 +875,14 @@ def test_solve_request_schema_round_trips_problem_data_as_json_safe_payload() ->
     assert request.problem.demand == data.demand
     assert request.problem.hint_assignments == data.hint_assignments
     assert request.problem.employees[0].roles == data.employees[0].roles
+
+
+def test_solve_request_schema_defaults_use_warm_start_to_false() -> None:
+    payload = solve_request_to_payload(_small_fully_feasible_problem())
+    request = parse_solve_request(json.loads(json.dumps(payload)))
+
+    assert payload["options"]["use_warm_start"] is False
+    assert request.options.use_warm_start is False
 
 
 def test_solve_response_schema_is_json_safe_and_preserves_solver_components() -> None:
@@ -963,6 +977,54 @@ def test_solve_payload_returns_error_envelope_for_invalid_request() -> None:
             "message": "Solve request must contain a problem object",
         },
     }
+
+
+def test_solve_payload_rejects_non_boolean_use_warm_start() -> None:
+    payload = solve_request_to_payload(_small_fully_feasible_problem())
+    payload["options"]["use_warm_start"] = "false"
+
+    response_payload = solve_payload(payload)
+
+    assert response_payload == {
+        "ok": False,
+        "error": {
+            "type": "ValueError",
+            "message": "Solve option use_warm_start must be a boolean",
+        },
+    }
+
+
+def test_solve_payload_use_warm_start_matches_existing_hint_path() -> None:
+    data = _constrained_rest_window_problem()
+    request_payload = solve_request_to_payload(
+        data,
+        time_limit_sec=5.0,
+        seed=1,
+        use_warm_start=True,
+    )
+    response_payload = solve_payload(json.loads(json.dumps(request_payload)))
+    direct_result = solve(
+        with_warm_start_hints(data),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    assert response_payload["ok"]
+    assert response_payload["result"]["assignments"] == [
+        {
+            "employee_id": assignment.employee_id,
+            "day": assignment.day,
+            "shift": assignment.shift,
+            "role": assignment.role,
+        }
+        for assignment in sorted(
+            direct_result.assignments,
+            key=lambda item: (item.employee_id, item.day, item.shift, item.role),
+        )
+    ]
+    assert response_payload["result"]["objective_breakdown"][
+        "total_objective_value"
+    ] == direct_result.objective_breakdown.total_objective_value
 
 
 def test_cli_request_json_writes_response_envelope(tmp_path) -> None:
