@@ -4,13 +4,16 @@ from dataclasses import replace
 from itertools import product
 from pathlib import Path
 from typing import Dict, List, Tuple
+import asyncio
 import json
 import os
 import subprocess
 import sys
 
+import httpx
 import pytest
 
+from workforce_scheduling.api import app
 from workforce_scheduling.benchmark import (
     BenchmarkResult,
     benchmark_comparisons_payload,
@@ -393,6 +396,31 @@ def _run_module(module_name: str, *args: str) -> subprocess.CompletedProcess[str
         capture_output=True,
         text=True,
     )
+
+
+def _api_request(
+    method: str,
+    path: str,
+    *,
+    json_payload: object | None = None,
+    content: str | None = None,
+    headers: Dict[str, str] | None = None,
+) -> httpx.Response:
+    async def _request() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            return await client.request(
+                method,
+                path,
+                json=json_payload,
+                content=content,
+                headers=headers,
+            )
+
+    return asyncio.run(_request())
 
 
 def _assert_objective_breakdown_consistent(result: SolveResult) -> None:
@@ -1112,6 +1140,62 @@ def test_cli_request_json_writes_error_envelope_for_invalid_json(tmp_path) -> No
     response_payload = json.loads(response_path.read_text())
 
     assert completed.returncode == 1
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "JSONDecodeError"
+
+
+def test_api_health_endpoint_reports_service_status() -> None:
+    response = _api_request("GET", "/health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "service": "workforce_scheduling_solver",
+    }
+
+
+def test_api_solve_endpoint_returns_existing_success_envelope() -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
+    response = _api_request(
+        "POST",
+        "/solve",
+        json_payload=json.loads(fixture_path.read_text()),
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 200
+    assert response_payload["ok"]
+    assert response_payload["result"]["metrics"]["status"] == "OPTIMAL"
+    assert response_payload["result"]["objective_breakdown"]["total_shortage"] == 0
+
+
+def test_api_solve_endpoint_returns_existing_error_envelope() -> None:
+    response = _api_request(
+        "POST",
+        "/solve",
+        json_payload={"options": {"seed": 1}},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "ok": False,
+        "error": {
+            "type": "SchemaValidationError",
+            "message": "Solve request must contain a problem object",
+        },
+    }
+
+
+def test_api_solve_endpoint_returns_error_envelope_for_invalid_json() -> None:
+    response = _api_request(
+        "POST",
+        "/solve",
+        content="{",
+        headers={"content-type": "application/json"},
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
     assert response_payload["ok"] is False
     assert response_payload["error"]["type"] == "JSONDecodeError"
 

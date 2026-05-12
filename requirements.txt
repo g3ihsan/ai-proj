@@ -1,2 +1,5 @@
 ortools
 pytest
+fastapi
+uvicorn
+httpx

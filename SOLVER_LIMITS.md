@@ -55,3 +55,8 @@ Solve request options include `use_warm_start`, which defaults to `false`.
 When set to `true`, the boundary uses the existing deterministic warm-start
 hint generator only; it does not add objectives, constraints, or different
 optimization behavior.
+
+`workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
+It exposes `POST /solve` and preserves the existing success/error envelope.
+It does not add persistence, workers, auth, websocket delivery, or any new
+solver behavior.

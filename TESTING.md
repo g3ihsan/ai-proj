@@ -21,6 +21,12 @@ PYTHONPATH=. python -m workforce_scheduling.cli --request-json request.json --re
 The checked-in fixture `tests/fixtures/solve_request_small.json` is a minimal
 valid request for contract tests.
 
+Run the thin HTTP wrapper locally:
+
+```bash
+PYTHONPATH=. uvicorn workforce_scheduling.api:app --reload
+```
+
 Run benchmark fixtures:
 
 ```bash
