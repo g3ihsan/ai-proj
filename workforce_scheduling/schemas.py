@@ -15,6 +15,7 @@ from .warm_start import with_warm_start_hints
 
 
 SCHEMA_VERSION = 1
+MAX_TIME_LIMIT_SEC = 30.0
 
 
 class SchemaValidationError(ValueError):
@@ -70,7 +71,7 @@ def parse_solve_request(payload: Mapping[str, Any]) -> SolveRequest:
         raise SchemaValidationError("Solve request options must be an object")
 
     options = SolveOptions(
-        time_limit_sec=_float_option(options_payload, "time_limit_sec", 10.0),
+        time_limit_sec=_time_limit_option(options_payload, "time_limit_sec", 10.0),
         seed=_int_option(options_payload, "seed", 1),
         use_warm_start=_bool_option(options_payload, "use_warm_start", False),
     )
@@ -133,14 +134,22 @@ def _float_option(
     default: float,
 ) -> float:
     value = payload.get(key, default)
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise SchemaValidationError(f"Solve option {key} must be numeric")
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
+    return float(value)
+
+
+def _time_limit_option(
+    payload: Mapping[str, Any],
+    key: str,
+    default: float,
+) -> float:
+    value = _float_option(payload, key, default)
+    if not 0 < value <= MAX_TIME_LIMIT_SEC:
         raise SchemaValidationError(
-            f"Solve option {key} must be numeric"
-        ) from exc
+            f"Solve option {key} must be > 0 and <= {MAX_TIME_LIMIT_SEC:g}"
+        )
+    return value
 
 
 def _int_option(
@@ -149,14 +158,9 @@ def _int_option(
     default: int,
 ) -> int:
     value = payload.get(key, default)
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, int):
         raise SchemaValidationError(f"Solve option {key} must be an integer")
-    try:
-        return int(value)
-    except (TypeError, ValueError) as exc:
-        raise SchemaValidationError(
-            f"Solve option {key} must be an integer"
-        ) from exc
+    return value
 
 
 def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:

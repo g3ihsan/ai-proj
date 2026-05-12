@@ -915,6 +915,66 @@ def test_solve_request_schema_defaults_use_warm_start_to_false() -> None:
     assert request.options.use_warm_start is False
 
 
+def test_solve_request_schema_accepts_maximum_time_limit_boundary() -> None:
+    payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=30.0,
+    )
+
+    request = parse_solve_request(json.loads(json.dumps(payload)))
+
+    assert request.options.time_limit_sec == 30.0
+
+
+@pytest.mark.parametrize("unsafe_time_limit", [0, -1, 30.1])
+def test_solve_payload_rejects_time_limit_outside_safety_bounds(
+    unsafe_time_limit: float,
+) -> None:
+    payload = solve_request_to_payload(_small_fully_feasible_problem())
+    payload["options"]["time_limit_sec"] = unsafe_time_limit
+
+    response_payload = solve_payload(payload)
+
+    assert response_payload == {
+        "ok": False,
+        "error": {
+            "type": "SchemaValidationError",
+            "message": "Solve option time_limit_sec must be > 0 and <= 30",
+        },
+    }
+
+
+def test_solve_payload_rejects_non_numeric_time_limit() -> None:
+    payload = solve_request_to_payload(_small_fully_feasible_problem())
+    payload["options"]["time_limit_sec"] = "5"
+
+    response_payload = solve_payload(payload)
+
+    assert response_payload == {
+        "ok": False,
+        "error": {
+            "type": "SchemaValidationError",
+            "message": "Solve option time_limit_sec must be numeric",
+        },
+    }
+
+
+@pytest.mark.parametrize("invalid_seed", ["1", 1.2, True])
+def test_solve_payload_rejects_non_integer_seed(invalid_seed: object) -> None:
+    payload = solve_request_to_payload(_small_fully_feasible_problem())
+    payload["options"]["seed"] = invalid_seed
+
+    response_payload = solve_payload(payload)
+
+    assert response_payload == {
+        "ok": False,
+        "error": {
+            "type": "SchemaValidationError",
+            "message": "Solve option seed must be an integer",
+        },
+    }
+
+
 def test_solve_response_schema_is_json_safe_and_preserves_solver_components() -> None:
     result = solve(_small_fully_feasible_problem(), time_limit_sec=5.0, seed=1)
     payload = solve_result_to_payload(result)
@@ -1182,6 +1242,22 @@ def test_api_solve_endpoint_returns_existing_error_envelope() -> None:
         "error": {
             "type": "SchemaValidationError",
             "message": "Solve request must contain a problem object",
+        },
+    }
+
+
+def test_api_solve_endpoint_rejects_unsafe_options_before_solving() -> None:
+    payload = solve_request_to_payload(_small_fully_feasible_problem())
+    payload["options"]["time_limit_sec"] = 0
+
+    response = _api_request("POST", "/solve", json_payload=payload)
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "ok": False,
+        "error": {
+            "type": "SchemaValidationError",
+            "message": "Solve option time_limit_sec must be > 0 and <= 30",
         },
     }
 
