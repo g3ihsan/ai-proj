@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from argparse import ArgumentParser
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+import json
 from typing import Callable, Dict, Iterable, List
 
 from .data import Employee, ProblemData, generate_synthetic_data
@@ -30,6 +31,8 @@ class BenchmarkResult:
     status: str
     objective_value: float | None
     best_bound: float | None
+    absolute_optimality_gap: float | None
+    relative_optimality_gap_percent: float | None
     wall_time_sec: float
     num_conflicts: int
     num_branches: int
@@ -286,6 +289,9 @@ def format_benchmark_results(results: List[BenchmarkResult]) -> str:
         "hints",
         "status",
         "objective",
+        "best_bound",
+        "gap_abs",
+        "gap_pct",
         "shortage",
         "fairness",
         "labor_cost",
@@ -304,6 +310,9 @@ def format_benchmark_results(results: List[BenchmarkResult]) -> str:
             str(result.hint_count),
             result.status,
             _format_objective(result.objective_value),
+            _format_number(result.best_bound),
+            _format_number(result.absolute_optimality_gap),
+            _format_percent(result.relative_optimality_gap_percent),
             str(result.total_shortage),
             str(
                 result.workload_fairness_value
@@ -337,7 +346,12 @@ def format_benchmark_results(results: List[BenchmarkResult]) -> str:
         )
         for row in rows
     )
-    return "\n".join(lines)
+    return "\n\n".join(
+        [
+            "\n".join(lines),
+            format_benchmark_summary(summarize_benchmark_results(results)),
+        ]
+    )
 
 
 def format_benchmark_comparisons(comparisons: List[BenchmarkComparison]) -> str:
@@ -347,12 +361,22 @@ def format_benchmark_comparisons(comparisons: List[BenchmarkComparison]) -> str:
         "demand",
         "base_status",
         "warm_status",
+        "base_wall",
+        "warm_wall",
         "base_obj",
         "warm_obj",
+        "base_bound",
+        "warm_bound",
+        "base_gap_pct",
+        "warm_gap_pct",
         "base_branches",
         "warm_branches",
         "base_conflicts",
         "warm_conflicts",
+        "base_shortage",
+        "warm_shortage",
+        "base_violations",
+        "warm_violations",
         "warm_hints",
     ]
     rows = [
@@ -362,12 +386,22 @@ def format_benchmark_comparisons(comparisons: List[BenchmarkComparison]) -> str:
             str(comparison.baseline.total_demand),
             comparison.baseline.status,
             comparison.warm_start.status,
+            f"{comparison.baseline.wall_time_sec:.4f}",
+            f"{comparison.warm_start.wall_time_sec:.4f}",
             _format_objective(comparison.baseline.objective_value),
             _format_objective(comparison.warm_start.objective_value),
+            _format_number(comparison.baseline.best_bound),
+            _format_number(comparison.warm_start.best_bound),
+            _format_percent(comparison.baseline.relative_optimality_gap_percent),
+            _format_percent(comparison.warm_start.relative_optimality_gap_percent),
             str(comparison.baseline.num_branches),
             str(comparison.warm_start.num_branches),
             str(comparison.baseline.num_conflicts),
             str(comparison.warm_start.num_conflicts),
+            str(comparison.baseline.total_shortage),
+            str(comparison.warm_start.total_shortage),
+            str(comparison.baseline.validation_violation_count),
+            str(comparison.warm_start.validation_violation_count),
             str(comparison.warm_start.hint_count),
         ]
         for comparison in comparisons
@@ -390,7 +424,156 @@ def format_benchmark_comparisons(comparisons: List[BenchmarkComparison]) -> str:
         )
         for row in rows
     )
+    return "\n\n".join(
+        [
+            "\n".join(lines),
+            format_comparison_summary(summarize_benchmark_comparisons(comparisons)),
+        ]
+    )
+
+
+def summarize_benchmark_results(results: List[BenchmarkResult]) -> Dict[str, object]:
+    if not results:
+        return {
+            "case_count": 0,
+            "fastest_case": None,
+            "slowest_case": None,
+            "largest_variable_count": None,
+            "largest_variable_count_case": None,
+            "largest_constraint_count": None,
+            "largest_constraint_count_case": None,
+            "optimal_cases": 0,
+            "feasible_cases": 0,
+            "non_success_cases": 0,
+            "has_validation_violations": False,
+            "total_shortage": 0,
+        }
+
+    fastest = min(results, key=lambda result: result.wall_time_sec)
+    slowest = max(results, key=lambda result: result.wall_time_sec)
+    largest_variables = max(results, key=lambda result: result.num_variables)
+    largest_constraints = max(results, key=lambda result: result.num_constraints)
+    success_statuses = {"OPTIMAL", "FEASIBLE"}
+    return {
+        "case_count": len(results),
+        "fastest_case": fastest.name,
+        "slowest_case": slowest.name,
+        "largest_variable_count": largest_variables.num_variables,
+        "largest_variable_count_case": largest_variables.name,
+        "largest_constraint_count": largest_constraints.num_constraints,
+        "largest_constraint_count_case": largest_constraints.name,
+        "optimal_cases": sum(1 for result in results if result.status == "OPTIMAL"),
+        "feasible_cases": sum(1 for result in results if result.status == "FEASIBLE"),
+        "non_success_cases": sum(
+            1 for result in results if result.status not in success_statuses
+        ),
+        "has_validation_violations": any(
+            result.validation_violation_count > 0 for result in results
+        ),
+        "total_shortage": sum(result.total_shortage for result in results),
+    }
+
+
+def summarize_benchmark_comparisons(
+    comparisons: List[BenchmarkComparison],
+) -> Dict[str, object]:
+    improved_wall_time = [
+        comparison.name
+        for comparison in comparisons
+        if comparison.warm_start.wall_time_sec < comparison.baseline.wall_time_sec
+    ]
+    worsened_wall_time = [
+        comparison.name
+        for comparison in comparisons
+        if comparison.warm_start.wall_time_sec > comparison.baseline.wall_time_sec
+    ]
+    objective_changed = [
+        comparison.name
+        for comparison in comparisons
+        if comparison.warm_start.objective_value != comparison.baseline.objective_value
+    ]
+    validation_violations = [
+        comparison.name
+        for comparison in comparisons
+        if comparison.baseline.validation_violation_count > 0
+        or comparison.warm_start.validation_violation_count > 0
+    ]
+    branch_reductions = [
+        (
+            comparison.name,
+            comparison.baseline.num_branches - comparison.warm_start.num_branches,
+        )
+        for comparison in comparisons
+    ]
+    conflict_reductions = [
+        (
+            comparison.name,
+            comparison.baseline.num_conflicts - comparison.warm_start.num_conflicts,
+        )
+        for comparison in comparisons
+    ]
+    best_branch_reduction = _largest_positive_reduction(branch_reductions)
+    best_conflict_reduction = _largest_positive_reduction(conflict_reductions)
+    return {
+        "case_count": len(comparisons),
+        "warm_start_improved_wall_time_cases": improved_wall_time,
+        "warm_start_worsened_wall_time_cases": worsened_wall_time,
+        "objective_changed_cases": objective_changed,
+        "validation_violation_cases": validation_violations,
+        "largest_branch_reduction": best_branch_reduction,
+        "largest_conflict_reduction": best_conflict_reduction,
+    }
+
+
+def format_benchmark_summary(summary: Dict[str, object]) -> str:
+    lines = ["Summary:"]
+    for key in [
+        "case_count",
+        "fastest_case",
+        "slowest_case",
+        "largest_variable_count",
+        "largest_variable_count_case",
+        "largest_constraint_count",
+        "largest_constraint_count_case",
+        "optimal_cases",
+        "feasible_cases",
+        "non_success_cases",
+        "has_validation_violations",
+        "total_shortage",
+    ]:
+        lines.append(f"  {key}: {_format_summary_value(summary[key])}")
     return "\n".join(lines)
+
+
+def format_comparison_summary(summary: Dict[str, object]) -> str:
+    lines = ["Summary:"]
+    for key in [
+        "case_count",
+        "warm_start_improved_wall_time_cases",
+        "warm_start_worsened_wall_time_cases",
+        "objective_changed_cases",
+        "validation_violation_cases",
+        "largest_branch_reduction",
+        "largest_conflict_reduction",
+    ]:
+        lines.append(f"  {key}: {_format_summary_value(summary[key])}")
+    return "\n".join(lines)
+
+
+def benchmark_results_payload(results: List[BenchmarkResult]) -> Dict[str, object]:
+    return {
+        "results": [asdict(result) for result in results],
+        "summary": summarize_benchmark_results(results),
+    }
+
+
+def benchmark_comparisons_payload(
+    comparisons: List[BenchmarkComparison],
+) -> Dict[str, object]:
+    return {
+        "comparisons": [asdict(comparison) for comparison in comparisons],
+        "summary": summarize_benchmark_comparisons(comparisons),
+    }
 
 
 def main() -> int:
@@ -418,6 +601,11 @@ def main() -> int:
         action="store_true",
         help="Run each fixture without and with warm-start hints.",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print benchmark output as JSON.",
+    )
     args = parser.parse_args()
 
     cases = scaling_benchmark_cases() if args.scaling else benchmark_cases()
@@ -427,7 +615,10 @@ def main() -> int:
 
     if args.compare_warm_start:
         comparisons = run_benchmark_comparisons(cases)
-        print(format_benchmark_comparisons(comparisons))
+        if args.json:
+            print(json.dumps(benchmark_comparisons_payload(comparisons), indent=2))
+        else:
+            print(format_benchmark_comparisons(comparisons))
         return 0 if all(
             comparison.baseline.status in ("OPTIMAL", "FEASIBLE")
             and comparison.warm_start.status in ("OPTIMAL", "FEASIBLE")
@@ -435,7 +626,10 @@ def main() -> int:
         ) else 1
 
     results = run_benchmarks(cases, warm_start=not args.no_warm_start)
-    print(format_benchmark_results(results))
+    if args.json:
+        print(json.dumps(benchmark_results_payload(results), indent=2))
+    else:
+        print(format_benchmark_results(results))
     return (
         0
         if all(result.status in ("OPTIMAL", "FEASIBLE") for result in results)
@@ -463,6 +657,14 @@ def _result_from_solve(
         status=result.metrics.status,
         objective_value=result.metrics.objective_value,
         best_bound=result.metrics.best_bound,
+        absolute_optimality_gap=_absolute_optimality_gap(
+            result.metrics.objective_value,
+            result.metrics.best_bound,
+        ),
+        relative_optimality_gap_percent=_relative_optimality_gap_percent(
+            result.metrics.objective_value,
+            result.metrics.best_bound,
+        ),
         wall_time_sec=result.metrics.wall_time_sec,
         num_conflicts=result.metrics.num_conflicts,
         num_branches=result.metrics.num_branches,
@@ -559,11 +761,66 @@ def _make_problem(
 
 
 def _format_objective(objective_value: float | None) -> str:
-    if objective_value is None:
+    return _format_number(objective_value)
+
+
+def _format_number(value: float | None) -> str:
+    if value is None:
         return "-"
-    if objective_value.is_integer():
-        return str(int(objective_value))
-    return f"{objective_value:.4f}"
+    if float(value).is_integer():
+        return str(int(value))
+    return f"{value:.4f}"
+
+
+def _format_percent(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.2f}"
+
+
+def _format_summary_value(value: object) -> str:
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value) if value else "none"
+    if isinstance(value, dict):
+        if not value:
+            return "none"
+        return ", ".join(f"{key}={item}" for key, item in value.items())
+    if value is None:
+        return "none"
+    return str(value)
+
+
+def _absolute_optimality_gap(
+    objective_value: float | None,
+    best_bound: float | None,
+) -> float | None:
+    if objective_value is None or best_bound is None:
+        return None
+    return abs(objective_value - best_bound)
+
+
+def _relative_optimality_gap_percent(
+    objective_value: float | None,
+    best_bound: float | None,
+) -> float | None:
+    absolute_gap = _absolute_optimality_gap(objective_value, best_bound)
+    if absolute_gap is None or objective_value == 0:
+        return None
+    return absolute_gap / abs(objective_value) * 100
+
+
+def _largest_positive_reduction(
+    reductions: List[tuple[str, int]],
+) -> Dict[str, int | str] | None:
+    positive_reductions = [
+        (case_name, reduction)
+        for case_name, reduction in reductions
+        if reduction > 0
+    ]
+    if not positive_reductions:
+        return None
+    case_name, reduction = max(positive_reductions, key=lambda item: item[1])
+    return {"case": case_name, "reduction": reduction}
 
 
 if __name__ == "__main__":

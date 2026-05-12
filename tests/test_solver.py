@@ -3,18 +3,25 @@ from __future__ import annotations
 from dataclasses import replace
 from itertools import product
 from typing import Dict, List, Tuple
+import json
 
 import pytest
 
 from workforce_scheduling.benchmark import (
     BenchmarkResult,
+    benchmark_comparisons_payload,
     benchmark_cases,
+    benchmark_results_payload,
     format_benchmark_comparisons,
     format_benchmark_results,
     run_benchmark_case,
     run_benchmark_comparisons,
     run_benchmarks,
     scaling_benchmark_cases,
+)
+from workforce_scheduling.benchmark import (
+    _absolute_optimality_gap,
+    _relative_optimality_gap_percent,
 )
 from workforce_scheduling.data import Employee, ProblemData, generate_synthetic_data
 from workforce_scheduling.solve import (
@@ -211,6 +218,8 @@ def _stable_benchmark_tuple(result: BenchmarkResult) -> Tuple[object, ...]:
         result.status,
         result.objective_value,
         result.best_bound,
+        result.absolute_optimality_gap,
+        result.relative_optimality_gap_percent,
         result.num_conflicts,
         result.num_branches,
         result.num_variables,
@@ -503,6 +512,9 @@ def test_benchmark_runner_reports_solver_and_objective_baselines() -> None:
         assert result.total_demand > 0
         assert result.warm_start_enabled
         assert result.hint_count > 0
+        assert result.best_bound is not None
+        assert result.absolute_optimality_gap is not None
+        assert result.relative_optimality_gap_percent is not None
         assert result.validation_violation_count == 0
         assert result.num_variables > 0
         assert result.num_constraints > 0
@@ -563,6 +575,20 @@ def test_synthetic_20_employee_scaling_fixture_solves_without_large_manual_cases
     assert result.num_constraints > 0
 
 
+def test_benchmark_gap_metrics_handle_solved_and_missing_objectives() -> None:
+    result = run_benchmark_case(
+        next(case for case in benchmark_cases() if case.name == "small_fully_feasible")
+    )
+
+    assert result.absolute_optimality_gap == 0
+    assert result.relative_optimality_gap_percent == 0
+    assert _absolute_optimality_gap(None, 10.0) is None
+    assert _absolute_optimality_gap(10.0, None) is None
+    assert _relative_optimality_gap_percent(None, 10.0) is None
+    assert _relative_optimality_gap_percent(0.0, 0.0) is None
+    assert _relative_optimality_gap_percent(100.0, 90.0) == 10.0
+
+
 def test_benchmark_results_format_is_stable_and_readable() -> None:
     case = next(
         case for case in benchmark_cases() if case.name == "small_fully_feasible"
@@ -572,10 +598,15 @@ def test_benchmark_results_format_is_stable_and_readable() -> None:
     assert "case" in output
     assert "employees" in output
     assert "demand" in output
+    assert "best_bound" in output
+    assert "gap_abs" in output
+    assert "gap_pct" in output
     assert "status" in output
     assert "warm_start" in output
     assert "shortage" in output
     assert "small_fully_feasible" in output
+    assert "Summary:" in output
+    assert "case_count" in output
 
 
 def test_benchmark_comparison_reports_unhinted_and_warm_started_runs() -> None:
@@ -589,8 +620,19 @@ def test_benchmark_comparison_reports_unhinted_and_warm_started_runs() -> None:
 
     assert "base_status" in output
     assert "warm_status" in output
+    assert "base_wall" in output
+    assert "warm_wall" in output
+    assert "base_bound" in output
+    assert "warm_bound" in output
+    assert "base_gap_pct" in output
+    assert "warm_gap_pct" in output
+    assert "base_shortage" in output
+    assert "warm_shortage" in output
+    assert "base_violations" in output
+    assert "warm_violations" in output
     assert "employees" in output
     assert "demand" in output
+    assert "Summary:" in output
     assert len(comparisons) == len(cases)
     for comparison in comparisons:
         assert not comparison.baseline.warm_start_enabled
@@ -603,6 +645,25 @@ def test_benchmark_comparison_reports_unhinted_and_warm_started_runs() -> None:
             comparison.baseline.objective_value
             == comparison.warm_start.objective_value
         )
+
+
+def test_benchmark_json_payloads_include_results_and_summaries() -> None:
+    case = next(
+        case for case in benchmark_cases() if case.name == "small_fully_feasible"
+    )
+    results_payload = benchmark_results_payload([run_benchmark_case(case)])
+    comparisons_payload = benchmark_comparisons_payload(
+        [run_benchmark_comparisons([case])[0]]
+    )
+
+    encoded_results = json.loads(json.dumps(results_payload))
+    encoded_comparisons = json.loads(json.dumps(comparisons_payload))
+
+    assert encoded_results["results"][0]["name"] == "small_fully_feasible"
+    assert "relative_optimality_gap_percent" in encoded_results["results"][0]
+    assert encoded_results["summary"]["case_count"] == 1
+    assert encoded_comparisons["comparisons"][0]["name"] == "small_fully_feasible"
+    assert "largest_branch_reduction" in encoded_comparisons["summary"]
 
 
 def test_shift_length_hours_is_not_part_of_problem_data() -> None:
