@@ -43,8 +43,9 @@ status, objective components, validation counts, search metrics, and warm-start
 comparison facts.
 
 `workforce_scheduling.schemas` provides a JSON-safe request/response boundary
-for future service integration. It is an in-process schema adapter only; this
-project still does not include an HTTP API, database, queue, worker, or frontend.
+for future service integration. It is an in-process schema adapter used by a
+thin HTTP wrapper only; this project still does not include a database, queue,
+worker, persistence layer, or frontend.
 `solve_payload(...)` returns a stable envelope: `{"ok": true, "result": ...}`
 for processed solve requests and `{"ok": false, "error": ...}` for malformed
 requests or solver input errors.
@@ -61,6 +62,6 @@ Request options are intentionally bounded before the solver is called:
 wrapper from accepting ambiguous or unexpectedly expensive solve requests.
 
 `workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
-It exposes `POST /solve` and preserves the existing success/error envelope.
-It does not add persistence, workers, auth, websocket delivery, or any new
-solver behavior.
+It exposes `GET /health`, `GET /metadata`, and `POST /solve`. The solve endpoint
+preserves the existing success/error envelope. It does not add persistence,
+workers, auth, websocket delivery, or any new solver behavior.

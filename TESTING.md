@@ -29,6 +29,12 @@ Run the thin HTTP wrapper locally:
 PYTHONPATH=. uvicorn workforce_scheduling.api:app --reload
 ```
 
+HTTP endpoints:
+
+- `GET /health`
+- `GET /metadata`
+- `POST /solve`
+
 Run benchmark fixtures:
 
 ```bash
