@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from itertools import product
 from typing import Dict, List, Tuple
 
@@ -13,6 +14,7 @@ from workforce_scheduling.benchmark import (
     run_benchmark_case,
     run_benchmark_comparisons,
     run_benchmarks,
+    scaling_benchmark_cases,
 )
 from workforce_scheduling.data import Employee, ProblemData, generate_synthetic_data
 from workforce_scheduling.solve import (
@@ -200,6 +202,10 @@ def _raw_fairness_value(breakdown: ObjectiveBreakdown) -> int:
 def _stable_benchmark_tuple(result: BenchmarkResult) -> Tuple[object, ...]:
     return (
         result.name,
+        result.employee_count,
+        result.day_count,
+        result.shift_count,
+        result.total_demand,
         result.warm_start_enabled,
         result.hint_count,
         result.status,
@@ -463,6 +469,18 @@ def test_benchmark_cases_include_required_scenarios() -> None:
     } == names
 
 
+def test_scaling_benchmark_cases_include_required_sizes() -> None:
+    cases = scaling_benchmark_cases()
+    names = {case.name for case in cases}
+
+    assert {
+        "synthetic_20_employee_weekly",
+        "synthetic_40_employee_weekly",
+        "synthetic_80_employee_weekly",
+        "synthetic_120_employee_weekly",
+    } == names
+
+
 def test_benchmark_runner_reports_solver_and_objective_baselines() -> None:
     expected_shortages = {
         "small_fully_feasible": 0,
@@ -481,6 +499,8 @@ def test_benchmark_runner_reports_solver_and_objective_baselines() -> None:
     assert {result.name for result in results} == set(expected_shortages)
     for result in results:
         assert result.status == "OPTIMAL"
+        assert result.employee_count > 0
+        assert result.total_demand > 0
         assert result.warm_start_enabled
         assert result.hint_count > 0
         assert result.validation_violation_count == 0
@@ -515,9 +535,28 @@ def test_synthetic_40_employee_weekly_benchmark_fixture_solves() -> None:
         for case in benchmark_cases()
         if case.name == "synthetic_40_employee_weekly"
     )
+    result = run_benchmark_case(replace(case, time_limit_sec=1.0))
+
+    assert result.status in ("OPTIMAL", "FEASIBLE")
+    assert result.validation_violation_count == 0
+    assert result.total_shortage == 0
+    assert result.num_variables > 0
+    assert result.num_constraints > 0
+
+
+def test_synthetic_20_employee_scaling_fixture_solves_without_large_manual_cases() -> None:
+    case = next(
+        case
+        for case in scaling_benchmark_cases()
+        if case.name == "synthetic_20_employee_weekly"
+    )
     result = run_benchmark_case(case)
 
     assert result.status in ("OPTIMAL", "FEASIBLE")
+    assert result.employee_count == 20
+    assert result.day_count == 7
+    assert result.shift_count == 3
+    assert result.total_demand == 63
     assert result.validation_violation_count == 0
     assert result.total_shortage == 0
     assert result.num_variables > 0
@@ -531,6 +570,8 @@ def test_benchmark_results_format_is_stable_and_readable() -> None:
     output = format_benchmark_results([run_benchmark_case(case)])
 
     assert "case" in output
+    assert "employees" in output
+    assert "demand" in output
     assert "status" in output
     assert "warm_start" in output
     assert "shortage" in output
@@ -548,6 +589,8 @@ def test_benchmark_comparison_reports_unhinted_and_warm_started_runs() -> None:
 
     assert "base_status" in output
     assert "warm_status" in output
+    assert "employees" in output
+    assert "demand" in output
     assert len(comparisons) == len(cases)
     for comparison in comparisons:
         assert not comparison.baseline.warm_start_enabled

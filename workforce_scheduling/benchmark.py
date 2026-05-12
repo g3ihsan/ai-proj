@@ -21,6 +21,10 @@ class BenchmarkCase:
 @dataclass(frozen=True)
 class BenchmarkResult:
     name: str
+    employee_count: int
+    day_count: int
+    shift_count: int
+    total_demand: int
     warm_start_enabled: bool
     hint_count: int
     status: str
@@ -77,6 +81,42 @@ def benchmark_cases() -> List[BenchmarkCase]:
             description="Deterministic generated 40-employee, 7-day, 3-shift case.",
             data_factory=synthetic_40_employee_weekly_case,
             time_limit_sec=15.0,
+            seed=7,
+        ),
+    ]
+
+
+def scaling_benchmark_cases() -> List[BenchmarkCase]:
+    return [
+        BenchmarkCase(
+            name="synthetic_20_employee_weekly",
+            description=(
+                "Deterministic generated 20-employee weekly case with scaled "
+                "coverage demand."
+            ),
+            data_factory=synthetic_20_employee_weekly_case,
+            time_limit_sec=10.0,
+            seed=7,
+        ),
+        BenchmarkCase(
+            name="synthetic_40_employee_weekly",
+            description="Deterministic generated 40-employee, 7-day, 3-shift case.",
+            data_factory=synthetic_40_employee_weekly_case,
+            time_limit_sec=15.0,
+            seed=7,
+        ),
+        BenchmarkCase(
+            name="synthetic_80_employee_weekly",
+            description="Deterministic generated 80-employee, 7-day, 3-shift case.",
+            data_factory=synthetic_80_employee_weekly_case,
+            time_limit_sec=20.0,
+            seed=7,
+        ),
+        BenchmarkCase(
+            name="synthetic_120_employee_weekly",
+            description="Deterministic generated 120-employee, 7-day, 3-shift case.",
+            data_factory=synthetic_120_employee_weekly_case,
+            time_limit_sec=25.0,
             seed=7,
         ),
     ]
@@ -159,6 +199,34 @@ def synthetic_40_employee_weekly_case() -> ProblemData:
     )
 
 
+def synthetic_20_employee_weekly_case() -> ProblemData:
+    return generate_synthetic_data(
+        seed=17,
+        num_employees=20,
+        num_days=7,
+        shifts_per_day=3,
+        base_role_demand={"cashier": 1, "cook": 1, "manager": 1},
+    )
+
+
+def synthetic_80_employee_weekly_case() -> ProblemData:
+    return generate_synthetic_data(
+        seed=17,
+        num_employees=80,
+        num_days=7,
+        shifts_per_day=3,
+    )
+
+
+def synthetic_120_employee_weekly_case() -> ProblemData:
+    return generate_synthetic_data(
+        seed=17,
+        num_employees=120,
+        num_days=7,
+        shifts_per_day=3,
+    )
+
+
 def run_benchmark_case(
     case: BenchmarkCase,
     *,
@@ -176,6 +244,7 @@ def run_benchmark_case(
     )
     return _result_from_solve(
         case.name,
+        data,
         result,
         warm_start_enabled=warm_start,
         hint_count=len(data.hint_assignments),
@@ -211,6 +280,8 @@ def run_benchmark_comparisons(
 def format_benchmark_results(results: List[BenchmarkResult]) -> str:
     headers = [
         "case",
+        "employees",
+        "demand",
         "warm_start",
         "hints",
         "status",
@@ -227,6 +298,8 @@ def format_benchmark_results(results: List[BenchmarkResult]) -> str:
     rows = [
         [
             result.name,
+            str(result.employee_count),
+            str(result.total_demand),
             "yes" if result.warm_start_enabled else "no",
             str(result.hint_count),
             result.status,
@@ -270,6 +343,8 @@ def format_benchmark_results(results: List[BenchmarkResult]) -> str:
 def format_benchmark_comparisons(comparisons: List[BenchmarkComparison]) -> str:
     headers = [
         "case",
+        "employees",
+        "demand",
         "base_status",
         "warm_status",
         "base_obj",
@@ -283,6 +358,8 @@ def format_benchmark_comparisons(comparisons: List[BenchmarkComparison]) -> str:
     rows = [
         [
             comparison.name,
+            str(comparison.baseline.employee_count),
+            str(comparison.baseline.total_demand),
             comparison.baseline.status,
             comparison.warm_start.status,
             _format_objective(comparison.baseline.objective_value),
@@ -323,8 +400,13 @@ def main() -> int:
     parser.add_argument(
         "--case",
         action="append",
-        choices=[case.name for case in benchmark_cases()],
+        choices=_case_choices(),
         help="Benchmark case name. May be passed more than once.",
+    )
+    parser.add_argument(
+        "--scaling",
+        action="store_true",
+        help="Run deterministic synthetic scaling benchmark cases.",
     )
     parser.add_argument(
         "--no-warm-start",
@@ -338,10 +420,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    cases = benchmark_cases()
+    cases = scaling_benchmark_cases() if args.scaling else benchmark_cases()
     if args.case:
-        requested = set(args.case)
-        cases = [case for case in cases if case.name in requested]
+        case_map = _case_map()
+        cases = [case_map[name] for name in args.case]
 
     if args.compare_warm_start:
         comparisons = run_benchmark_comparisons(cases)
@@ -363,6 +445,7 @@ def main() -> int:
 
 def _result_from_solve(
     name: str,
+    data: ProblemData,
     result: SolveResult,
     *,
     warm_start_enabled: bool,
@@ -371,6 +454,10 @@ def _result_from_solve(
     breakdown = result.objective_breakdown
     return BenchmarkResult(
         name=name,
+        employee_count=len(data.employees),
+        day_count=len(data.days),
+        shift_count=len(data.shifts),
+        total_demand=_total_demand(data),
         warm_start_enabled=warm_start_enabled,
         hint_count=hint_count,
         status=result.metrics.status,
@@ -391,6 +478,26 @@ def _result_from_solve(
         labor_cost_value=breakdown.labor_cost_value,
         total_objective_value=breakdown.total_objective_value,
         validation_violation_count=len(result.violations),
+    )
+
+
+def _case_choices() -> List[str]:
+    return sorted(_case_map())
+
+
+def _case_map() -> Dict[str, BenchmarkCase]:
+    cases: Dict[str, BenchmarkCase] = {}
+    for case in [*benchmark_cases(), *scaling_benchmark_cases()]:
+        cases[case.name] = case
+    return cases
+
+
+def _total_demand(data: ProblemData) -> int:
+    return sum(
+        data.demand[day][shift][role]
+        for day in data.days
+        for shift in range(len(data.shifts))
+        for role in data.roles
     )
 
 

@@ -23,3 +23,10 @@ Compare benchmark fixtures without and with warm-start hints:
 ```bash
 PYTHONPATH=. python -m workforce_scheduling.benchmark --compare-warm-start
 ```
+
+Run manual scaling benchmark fixtures:
+
+```bash
+PYTHONPATH=. python -m workforce_scheduling.benchmark --scaling
+PYTHONPATH=. python -m workforce_scheduling.benchmark --scaling --compare-warm-start
+```

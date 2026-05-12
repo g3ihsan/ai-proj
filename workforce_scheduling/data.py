@@ -192,6 +192,7 @@ def generate_synthetic_data(
     num_employees: int = 40,
     num_days: int = 7,
     shifts_per_day: int = 3,
+    base_role_demand: Dict[str, int] | None = None,
 ) -> ProblemData:
     rng = random.Random(seed)
     roles = ["cashier", "cook", "manager"]
@@ -202,7 +203,8 @@ def generate_synthetic_data(
     min_rest_hours = 10
     max_consecutive_days = 5
     shortage_penalty = 1000
-    base_role_demand = {"cashier": 2, "cook": 2, "manager": 1}
+    if base_role_demand is None:
+        base_role_demand = {"cashier": 2, "cook": 2, "manager": 1}
 
     max_attempts = 200
     for _ in range(max_attempts):
