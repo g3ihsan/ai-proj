@@ -21,7 +21,6 @@ class ProblemData:
     roles: List[str]
     days: List[int]
     shifts: List[str]
-    shift_length_hours: int
     shift_start_hours: List[int]
     shift_end_hours: List[int]
     min_rest_hours: int
@@ -46,6 +45,15 @@ def shift_start_end(
     return start, end
 
 
+def shift_duration_hours(
+    shift_start_hours: List[int],
+    shift_end_hours: List[int],
+    shift: int,
+) -> int:
+    start, end = shift_start_end(shift_start_hours, shift_end_hours, 0, shift)
+    return end - start
+
+
 def shift_end_offset(start_hour: int, end_hour: int) -> int:
     return end_hour if end_hour > start_hour else end_hour + 24
 
@@ -68,6 +76,117 @@ def opening_closing_shift_indices(
     return opening_index, closing_index
 
 
+def validate_problem_data(data: ProblemData) -> List[str]:
+    errors: List[str] = []
+    shift_count = len(data.shifts)
+
+    if not data.days:
+        errors.append("At least one day is required")
+    if not data.shifts:
+        errors.append("At least one shift is required")
+    if not data.roles:
+        errors.append("At least one role is required")
+    if data.days != list(range(len(data.days))):
+        errors.append("Days must be consecutive zero-based integers")
+    if len(data.shift_start_hours) != shift_count:
+        errors.append("shift_start_hours length must match shifts length")
+    if len(data.shift_end_hours) != shift_count:
+        errors.append("shift_end_hours length must match shifts length")
+    if data.min_rest_hours < 0:
+        errors.append("min_rest_hours must be non-negative")
+    if data.max_consecutive_days < 1:
+        errors.append("max_consecutive_days must be at least 1")
+    if data.shortage_penalty < 0:
+        errors.append("shortage_penalty must be non-negative")
+
+    if (
+        len(data.shift_start_hours) == shift_count
+        and len(data.shift_end_hours) == shift_count
+    ):
+        for shift in range(shift_count):
+            start_hour = data.shift_start_hours[shift]
+            end_hour = data.shift_end_hours[shift]
+            if not 0 <= start_hour < 24:
+                errors.append(f"Shift {shift} start hour must be in [0, 23]")
+            if not 0 <= end_hour <= 24:
+                errors.append(f"Shift {shift} end hour must be in [0, 24]")
+            duration = shift_duration_hours(
+                data.shift_start_hours,
+                data.shift_end_hours,
+                shift,
+            )
+            if duration <= 0:
+                errors.append(f"Shift {shift} duration must be positive")
+
+    employee_ids = set()
+    for employee in data.employees:
+        if employee.employee_id in employee_ids:
+            errors.append(f"Duplicate employee_id {employee.employee_id}")
+        employee_ids.add(employee.employee_id)
+        if employee.hourly_cost < 0:
+            errors.append(
+                f"Employee {employee.employee_id} hourly_cost must be non-negative"
+            )
+        if employee.max_weekly_hours < 0:
+            errors.append(
+                f"Employee {employee.employee_id} max_weekly_hours must be non-negative"
+            )
+        unknown_roles = [role for role in employee.roles if role not in data.roles]
+        if unknown_roles:
+            errors.append(
+                f"Employee {employee.employee_id} has unknown roles {unknown_roles}"
+            )
+        if len(employee.availability) != len(data.days):
+            errors.append(
+                f"Employee {employee.employee_id} availability must have one row per day"
+            )
+            continue
+        for day in data.days:
+            if day < 0 or day >= len(employee.availability):
+                errors.append(
+                    f"Employee {employee.employee_id} availability day {day} "
+                    "is outside availability rows"
+                )
+                continue
+            if len(employee.availability[day]) != shift_count:
+                errors.append(
+                    f"Employee {employee.employee_id} availability day {day} "
+                    "must have one value per shift"
+                )
+
+    for day in data.days:
+        if day not in data.demand:
+            errors.append(f"Missing demand for day {day}")
+            continue
+        for shift in range(shift_count):
+            if shift not in data.demand[day]:
+                errors.append(f"Missing demand for day {day} shift {shift}")
+                continue
+            for role in data.roles:
+                if role not in data.demand[day][shift]:
+                    errors.append(
+                        f"Missing demand for day {day} shift {shift} role {role}"
+                    )
+                    continue
+                if data.demand[day][shift][role] < 0:
+                    errors.append(
+                        f"Demand for day {day} shift {shift} role {role} "
+                        "must be non-negative"
+                    )
+
+    for employee_id, day, shift, role in data.hint_assignments:
+        if employee_id not in employee_ids:
+            errors.append(f"Hint references unknown employee {employee_id}")
+        if day not in data.days:
+            errors.append(f"Hint references unknown day {day}")
+        if shift < 0 or shift >= shift_count:
+            errors.append(f"Hint references unknown shift {shift}")
+        if role not in data.roles:
+            errors.append(f"Hint references unknown role {role}")
+
+    return errors
+
+
 def generate_synthetic_data(
     seed: int,
     num_employees: int = 40,
@@ -78,7 +197,6 @@ def generate_synthetic_data(
     roles = ["cashier", "cook", "manager"]
     shifts = [f"shift_{i + 1}" for i in range(shifts_per_day)]
     days = list(range(num_days))
-    shift_length_hours = 8
     shift_start_hours = [6, 14, 22][:shifts_per_day]
     shift_end_hours = [14, 22, 6][:shifts_per_day]
     min_rest_hours = 10
@@ -99,7 +217,6 @@ def generate_synthetic_data(
             shifts_per_day,
             roles,
             demand,
-            shift_length_hours,
             shift_start_hours,
             shift_end_hours,
             min_rest_hours,
@@ -111,7 +228,6 @@ def generate_synthetic_data(
                 roles=roles,
                 days=days,
                 shifts=shifts,
-                shift_length_hours=shift_length_hours,
                 shift_start_hours=shift_start_hours,
                 shift_end_hours=shift_end_hours,
                 min_rest_hours=min_rest_hours,
@@ -209,7 +325,6 @@ def _build_feasible_assignment(
     shifts_per_day: int,
     roles: List[str],
     demand: Dict[int, Dict[int, Dict[str, int]]],
-    shift_length_hours: int,
     shift_start_hours: List[int],
     shift_end_hours: List[int],
     min_rest_hours: int,
@@ -232,13 +347,18 @@ def _build_feasible_assignment(
         for shift in range(shifts_per_day):
             for role in roles:
                 required = demand[day][shift][role]
+                duration = shift_duration_hours(
+                    shift_start_hours,
+                    shift_end_hours,
+                    shift,
+                )
                 candidates = [
                     e
                     for e in employees
                     if role in e.roles
                     and e.availability[day][shift]
                     and day not in assigned_days[e.employee_id]
-                    and remaining_hours[e.employee_id] >= shift_length_hours
+                    and remaining_hours[e.employee_id] >= duration
                     and _respects_temporal_rules(
                         e.employee_id,
                         day,
@@ -264,7 +384,7 @@ def _build_feasible_assignment(
                 for employee in selected:
                     assignments[(employee.employee_id, day, shift, role)] = 1
                     assigned_days[employee.employee_id].add(day)
-                    remaining_hours[employee.employee_id] -= shift_length_hours
+                    remaining_hours[employee.employee_id] -= duration
                     _update_temporal_state(
                         employee.employee_id,
                         day,

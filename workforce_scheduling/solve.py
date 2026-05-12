@@ -4,8 +4,14 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 from ortools.sat.python import cp_model
 
-from .data import Employee, ProblemData, opening_closing_shift_indices, shift_start_end
-from .model import build_model
+from .data import (
+    Employee,
+    ProblemData,
+    opening_closing_shift_indices,
+    shift_duration_hours,
+    shift_start_end,
+)
+from .model import ConstraintRecord, build_model
 
 
 @dataclass
@@ -29,12 +35,38 @@ class SolverMetrics:
 
 
 @dataclass
+class FairnessMetrics:
+    assigned_hours_per_employee: Dict[int, int]
+    min_assigned_hours: int
+    max_assigned_hours: int
+    workload_spread: int
+    weekend_assignments_per_employee: Dict[int, int]
+    shift_counts_per_employee_shift: Dict[Tuple[int, int], int]
+
+
+@dataclass
+class ObjectiveBreakdown:
+    total_shortage: int
+    shortage_objective_value: int
+    workload_fairness_value: int
+    weekend_fairness_value: int
+    shift_distribution_fairness_value: int
+    fairness_objective_value: int
+    labor_cost_value: int
+    total_objective_value: int
+
+
+@dataclass
 class SolveResult:
     metrics: SolverMetrics
     assignments: List[Assignment]
     shortages: Dict[Tuple[int, int, str], int]
     violations: List[str]
     constraint_metadata: Dict[str, int]
+    objective_metadata: Dict[str, int]
+    constraint_records: List[ConstraintRecord]
+    fairness_metrics: FairnessMetrics
+    objective_breakdown: ObjectiveBreakdown
 
 
 def solve(
@@ -88,9 +120,22 @@ def solve(
         num_constraints=len(model.Proto().constraints),
     )
 
+    fairness_metrics = compute_fairness_metrics(data, assignments)
+    objective_metadata = _objective_metadata(artifacts.constraint_metadata)
+    objective_breakdown = compute_objective_breakdown(
+        data,
+        assignments,
+        shortages,
+        objective_metadata,
+    )
     violations = []
-    if assignments:
-        violations = validate_solution(data, assignments, shortages)
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        violations = validate_solution(
+            data,
+            assignments,
+            shortages,
+            fairness_metrics,
+        )
 
     return SolveResult(
         metrics=metrics,
@@ -98,6 +143,10 @@ def solve(
         shortages=shortages,
         violations=violations,
         constraint_metadata=artifacts.constraint_metadata,
+        objective_metadata=objective_metadata,
+        constraint_records=artifacts.constraint_records,
+        fairness_metrics=fairness_metrics,
+        objective_breakdown=objective_breakdown,
     )
 
 
@@ -105,9 +154,19 @@ def validate_solution(
     data: ProblemData,
     assignments: List[Assignment],
     shortages: Dict[Tuple[int, int, str], int] | None = None,
+    fairness_metrics: FairnessMetrics | None = None,
 ) -> List[str]:
     errors: List[str] = []
     employee_index: Dict[int, Employee] = {e.employee_id: e for e in data.employees}
+    valid_days = set(data.days)
+    valid_shifts = set(range(len(data.shifts)))
+    valid_roles = set(data.roles)
+    expected_shortage_keys = {
+        (day, shift, role)
+        for day in data.days
+        for shift in range(len(data.shifts))
+        for role in data.roles
+    }
 
     coverage: Dict[Tuple[int, int, str], int] = {}
     daily_work: Dict[Tuple[int, int], int] = {}
@@ -116,8 +175,34 @@ def validate_solution(
         e.employee_id: [] for e in data.employees
     }
 
+    if shortages is not None:
+        for key, value in shortages.items():
+            if key not in expected_shortage_keys:
+                errors.append(f"Invalid shortage key {key}")
+            if not isinstance(value, int):
+                errors.append(f"Invalid shortage value for key {key}: {value}")
+            elif value < 0:
+                errors.append(f"Shortage below zero for key {key}: {value}")
+
     for assignment in assignments:
-        employee = employee_index[assignment.employee_id]
+        employee = employee_index.get(assignment.employee_id)
+        if employee is None:
+            errors.append(f"Unknown employee_id {assignment.employee_id}")
+        if assignment.day not in valid_days:
+            errors.append(f"Unknown day {assignment.day}")
+        if assignment.shift not in valid_shifts:
+            errors.append(f"Unknown shift {assignment.shift}")
+        if assignment.role not in valid_roles:
+            errors.append(f"Unknown role {assignment.role}")
+
+        if (
+            employee is None
+            or assignment.day not in valid_days
+            or assignment.shift not in valid_shifts
+            or assignment.role not in valid_roles
+        ):
+            continue
+
         key = (assignment.day, assignment.shift, assignment.role)
         coverage[key] = coverage.get(key, 0) + 1
 
@@ -128,7 +213,11 @@ def validate_solution(
                 f"Employee {assignment.employee_id} works multiple shifts on day {assignment.day}"
             )
 
-        weekly_hours[assignment.employee_id] += data.shift_length_hours
+        weekly_hours[assignment.employee_id] += shift_duration_hours(
+            data.shift_start_hours,
+            data.shift_end_hours,
+            assignment.shift,
+        )
         if weekly_hours[assignment.employee_id] > employee.max_weekly_hours:
             errors.append(
                 f"Employee {assignment.employee_id} exceeds weekly hours"
@@ -139,7 +228,11 @@ def validate_solution(
                 f"Employee {assignment.employee_id} assigned to unqualified role {assignment.role}"
             )
 
-        if not employee.availability[assignment.day][assignment.shift]:
+        if not _is_available(employee, assignment.day, assignment.shift):
+            errors.append(
+                f"Employee {assignment.employee_id} assigned outside availability matrix"
+            )
+        elif not employee.availability[assignment.day][assignment.shift]:
             errors.append(
                 f"Employee {assignment.employee_id} assigned while unavailable"
             )
@@ -162,18 +255,267 @@ def validate_solution(
                     errors.append(
                         f"Overstaffed day {day} shift {shift} role {role}: {actual} > {required}"
                     )
-                if shortages is not None:
-                    reported = shortages.get((day, shift, role))
-                    if reported is None:
-                        errors.append(
-                            f"Missing shortage entry for day {day} shift {shift} role {role}"
-                        )
-                    elif reported != max(0, shortage_actual):
-                        errors.append(
-                            f"Shortage mismatch day {day} shift {shift} role {role}: {reported} != {max(0, shortage_actual)}"
-                        )
+                if shortages is None:
+                    continue
+                reported = shortages.get((day, shift, role))
+                if reported is None:
+                    errors.append(
+                        f"Missing shortage entry for day {day} shift {shift} role {role}"
+                    )
+                elif not isinstance(reported, int):
+                    continue
+                elif reported < 0:
+                    continue
+                elif reported != max(0, shortage_actual):
+                    errors.append(
+                        f"Shortage mismatch day {day} shift {shift} role {role}: {reported} != {max(0, shortage_actual)}"
+                    )
+
+    if fairness_metrics is not None:
+        expected_metrics = compute_fairness_metrics(data, assignments)
+        if fairness_metrics != expected_metrics:
+            errors.append("Fairness metrics do not match assignments")
 
     return errors
+
+
+def compute_fairness_metrics(
+    data: ProblemData,
+    assignments: List[Assignment],
+) -> FairnessMetrics:
+    employee_ids = [employee.employee_id for employee in data.employees]
+    assigned_hours = {employee_id: 0 for employee_id in employee_ids}
+    weekend_assignments = {employee_id: 0 for employee_id in employee_ids}
+    shift_counts = {
+        (employee_id, shift): 0
+        for employee_id in employee_ids
+        for shift in range(len(data.shifts))
+    }
+    valid_employee_ids = set(employee_ids)
+    valid_days = set(data.days)
+    valid_shifts = set(range(len(data.shifts)))
+
+    for assignment in assignments:
+        if (
+            assignment.employee_id not in valid_employee_ids
+            or assignment.day not in valid_days
+            or assignment.shift not in valid_shifts
+        ):
+            continue
+        duration = shift_duration_hours(
+            data.shift_start_hours,
+            data.shift_end_hours,
+            assignment.shift,
+        )
+        assigned_hours[assignment.employee_id] += duration
+        if assignment.day in (5, 6):
+            weekend_assignments[assignment.employee_id] += 1
+        shift_counts[(assignment.employee_id, assignment.shift)] += 1
+
+    if assigned_hours:
+        min_assigned_hours = min(assigned_hours.values())
+        max_assigned_hours = max(assigned_hours.values())
+    else:
+        min_assigned_hours = 0
+        max_assigned_hours = 0
+
+    return FairnessMetrics(
+        assigned_hours_per_employee=assigned_hours,
+        min_assigned_hours=min_assigned_hours,
+        max_assigned_hours=max_assigned_hours,
+        workload_spread=max_assigned_hours - min_assigned_hours,
+        weekend_assignments_per_employee=weekend_assignments,
+        shift_counts_per_employee_shift=shift_counts,
+    )
+
+
+def compute_objective_breakdown(
+    data: ProblemData,
+    assignments: List[Assignment],
+    shortages: Dict[Tuple[int, int, str], int],
+    objective_metadata: Dict[str, int],
+) -> ObjectiveBreakdown:
+    shortage_weight = objective_metadata.get("shortage_priority_weight", 0)
+    fairness_weight = objective_metadata.get("fairness_priority_weight", 0)
+    total_shortage = sum(shortages.values())
+    workload_fairness_value = _workload_fairness_value(data, assignments)
+    weekend_fairness_value = _weekend_fairness_value(data, assignments)
+    shift_distribution_fairness_value = _shift_distribution_fairness_value(
+        data,
+        assignments,
+    )
+    raw_fairness_value = (
+        workload_fairness_value
+        + weekend_fairness_value
+        + shift_distribution_fairness_value
+    )
+    labor_cost_value = _labor_cost_value(data, assignments)
+    shortage_objective_value = total_shortage * shortage_weight
+    fairness_objective_value = raw_fairness_value * fairness_weight
+
+    return ObjectiveBreakdown(
+        total_shortage=total_shortage,
+        shortage_objective_value=shortage_objective_value,
+        workload_fairness_value=workload_fairness_value,
+        weekend_fairness_value=weekend_fairness_value,
+        shift_distribution_fairness_value=shift_distribution_fairness_value,
+        fairness_objective_value=fairness_objective_value,
+        labor_cost_value=labor_cost_value,
+        total_objective_value=(
+            shortage_objective_value
+            + fairness_objective_value
+            + labor_cost_value
+        ),
+    )
+
+
+def _objective_metadata(metadata: Dict[str, int]) -> Dict[str, int]:
+    objective_keys = {
+        "shortage_priority_weight",
+        "fairness_priority_weight",
+        "labor_cost_component_upper_bound",
+        "workload_fairness_component_upper_bound",
+        "weekend_fairness_component_upper_bound",
+        "shift_distribution_fairness_component_upper_bound",
+    }
+    return {key: metadata[key] for key in objective_keys if key in metadata}
+
+
+def _workload_fairness_value(
+    data: ProblemData,
+    assignments: List[Assignment],
+) -> int:
+    relevant_employee_ids = _employees_with_feasible_assignment_vars(data)
+    if len(relevant_employee_ids) < 2:
+        return 0
+    assigned_hours = _assigned_hours_by_employee(data, assignments)
+    values = [assigned_hours[employee_id] for employee_id in relevant_employee_ids]
+    return max(values) - min(values)
+
+
+def _weekend_fairness_value(
+    data: ProblemData,
+    assignments: List[Assignment],
+) -> int:
+    weekend_days = {day for day in data.days if day in (5, 6)}
+    if not weekend_days:
+        return 0
+    relevant_employee_ids = _employees_with_feasible_assignment_vars(
+        data,
+        allowed_days=weekend_days,
+    )
+    if len(relevant_employee_ids) < 2:
+        return 0
+    counts = {employee_id: 0 for employee_id in relevant_employee_ids}
+    for assignment in assignments:
+        if (
+            assignment.employee_id in counts
+            and assignment.day in weekend_days
+        ):
+            counts[assignment.employee_id] += 1
+    return max(counts.values()) - min(counts.values())
+
+
+def _shift_distribution_fairness_value(
+    data: ProblemData,
+    assignments: List[Assignment],
+) -> int:
+    total_spread = 0
+    for shift in range(len(data.shifts)):
+        relevant_employee_ids = _employees_with_feasible_assignment_vars(
+            data,
+            allowed_shifts={shift},
+        )
+        if len(relevant_employee_ids) < 2:
+            continue
+        counts = {employee_id: 0 for employee_id in relevant_employee_ids}
+        for assignment in assignments:
+            if (
+                assignment.employee_id in counts
+                and assignment.shift == shift
+            ):
+                counts[assignment.employee_id] += 1
+        total_spread += max(counts.values()) - min(counts.values())
+    return total_spread
+
+
+def _labor_cost_value(data: ProblemData, assignments: List[Assignment]) -> int:
+    employee_index = {employee.employee_id: employee for employee in data.employees}
+    total = 0
+    for assignment in assignments:
+        employee = employee_index.get(assignment.employee_id)
+        if employee is None or not 0 <= assignment.shift < len(data.shifts):
+            continue
+        duration = shift_duration_hours(
+            data.shift_start_hours,
+            data.shift_end_hours,
+            assignment.shift,
+        )
+        total += employee.hourly_cost * duration
+    return total
+
+
+def _assigned_hours_by_employee(
+    data: ProblemData,
+    assignments: List[Assignment],
+) -> Dict[int, int]:
+    assigned_hours = {employee.employee_id: 0 for employee in data.employees}
+    valid_employee_ids = set(assigned_hours)
+    for assignment in assignments:
+        if (
+            assignment.employee_id not in valid_employee_ids
+            or assignment.shift < 0
+            or assignment.shift >= len(data.shifts)
+        ):
+            continue
+        assigned_hours[assignment.employee_id] += shift_duration_hours(
+            data.shift_start_hours,
+            data.shift_end_hours,
+            assignment.shift,
+        )
+    return assigned_hours
+
+
+def _employees_with_feasible_assignment_vars(
+    data: ProblemData,
+    allowed_days: set[int] | None = None,
+    allowed_shifts: set[int] | None = None,
+) -> List[int]:
+    employee_ids: List[int] = []
+    for employee in data.employees:
+        has_variable = False
+        for day in data.days:
+            if allowed_days is not None and day not in allowed_days:
+                continue
+            if day < 0 or day >= len(employee.availability):
+                continue
+            for shift in range(len(data.shifts)):
+                if allowed_shifts is not None and shift not in allowed_shifts:
+                    continue
+                if shift >= len(employee.availability[day]):
+                    continue
+                if employee.availability[day][shift] and _can_work_any_role(
+                    employee,
+                    data,
+                ):
+                    has_variable = True
+                    break
+            if has_variable:
+                break
+        if has_variable:
+            employee_ids.append(employee.employee_id)
+    return employee_ids
+
+
+def _can_work_any_role(employee: Employee, data: ProblemData) -> bool:
+    return any(role in data.roles for role in employee.roles)
+
+
+def _is_available(employee: Employee, day: int, shift: int) -> bool:
+    return (
+        0 <= day < len(employee.availability)
+        and 0 <= shift < len(employee.availability[day])
+    )
 
 
 def _validate_rest_windows(
