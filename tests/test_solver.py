@@ -4,6 +4,9 @@ from dataclasses import replace
 from itertools import product
 from typing import Dict, List, Tuple
 import json
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -37,6 +40,34 @@ from workforce_scheduling.warm_start import (
     with_warm_start_hints,
     without_hints,
 )
+
+
+REQUIRED_BENCHMARK_RESULT_FIELDS = {
+    "name",
+    "employee_count",
+    "day_count",
+    "shift_count",
+    "total_demand",
+    "warm_start_enabled",
+    "hint_count",
+    "status",
+    "objective_value",
+    "best_bound",
+    "absolute_optimality_gap",
+    "relative_optimality_gap_percent",
+    "wall_time_sec",
+    "num_conflicts",
+    "num_branches",
+    "num_variables",
+    "num_constraints",
+    "assignment_count",
+    "total_shortage",
+    "fairness_objective_value",
+    "labor_cost_value",
+    "total_objective_value",
+    "validation_violation_count",
+}
+COMPLETE_BENCHMARK_RESULT_FIELDS = set(BenchmarkResult.__dataclass_fields__)
 
 
 def _build_demand(
@@ -235,6 +266,111 @@ def _stable_benchmark_tuple(result: BenchmarkResult) -> Tuple[object, ...]:
         result.total_objective_value,
         result.validation_violation_count,
     )
+
+
+def _assert_benchmark_result_payload_valid(result: Dict[str, object]) -> None:
+    assert REQUIRED_BENCHMARK_RESULT_FIELDS <= result.keys()
+    assert COMPLETE_BENCHMARK_RESULT_FIELDS <= result.keys()
+    for gap_field in (
+        "absolute_optimality_gap",
+        "relative_optimality_gap_percent",
+    ):
+        gap_value = result[gap_field]
+        if gap_value is not None:
+            assert gap_value >= 0
+
+
+def _assert_benchmark_results_payload_valid(payload: Dict[str, object]) -> None:
+    assert "results" in payload
+    assert "summary" in payload
+
+    results = payload["results"]
+    summary = payload["summary"]
+    assert isinstance(results, list)
+    assert isinstance(summary, dict)
+    assert summary["case_count"] == len(results)
+
+    success_statuses = {"OPTIMAL", "FEASIBLE"}
+    for result in results:
+        assert isinstance(result, dict)
+        _assert_benchmark_result_payload_valid(result)
+
+    assert summary["total_shortage"] == sum(
+        result["total_shortage"] for result in results
+    )
+    assert summary["has_validation_violations"] == any(
+        result["validation_violation_count"] > 0 for result in results
+    )
+    assert summary["optimal_cases"] == sum(
+        1 for result in results if result["status"] == "OPTIMAL"
+    )
+    assert summary["feasible_cases"] == sum(
+        1 for result in results if result["status"] == "FEASIBLE"
+    )
+    assert summary["non_success_cases"] == sum(
+        1 for result in results if result["status"] not in success_statuses
+    )
+
+
+def _assert_benchmark_comparisons_payload_valid(payload: Dict[str, object]) -> None:
+    assert "comparisons" in payload
+    assert "summary" in payload
+
+    comparisons = payload["comparisons"]
+    summary = payload["summary"]
+    assert isinstance(comparisons, list)
+    assert isinstance(summary, dict)
+    assert summary["case_count"] == len(comparisons)
+
+    objective_changed_cases = []
+    validation_violation_cases = []
+    for comparison in comparisons:
+        assert isinstance(comparison, dict)
+        assert {"name", "baseline", "warm_start"} <= comparison.keys()
+        baseline = comparison["baseline"]
+        warm_start = comparison["warm_start"]
+        assert isinstance(baseline, dict)
+        assert isinstance(warm_start, dict)
+        _assert_benchmark_result_payload_valid(baseline)
+        _assert_benchmark_result_payload_valid(warm_start)
+        assert "hint_count" in warm_start
+        assert "validation_violation_count" in baseline
+        assert "validation_violation_count" in warm_start
+        assert baseline["name"] == comparison["name"]
+        assert warm_start["name"] == comparison["name"]
+        assert not baseline["warm_start_enabled"]
+        assert warm_start["warm_start_enabled"]
+
+        if baseline["objective_value"] != warm_start["objective_value"]:
+            objective_changed_cases.append(comparison["name"])
+        if (
+            baseline["validation_violation_count"] > 0
+            or warm_start["validation_violation_count"] > 0
+        ):
+            validation_violation_cases.append(comparison["name"])
+
+    assert summary["objective_changed_cases"] == objective_changed_cases
+    assert summary["validation_violation_cases"] == validation_violation_cases
+
+
+def _run_benchmark_cli_json(*args: str) -> Dict[str, object]:
+    env = os.environ.copy()
+    cwd = os.getcwd()
+    current_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        cwd
+        if not current_pythonpath
+        else os.pathsep.join([cwd, current_pythonpath])
+    )
+    completed = subprocess.run(
+        [sys.executable, "-m", "workforce_scheduling.benchmark", *args],
+        check=True,
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
 
 
 def _assert_objective_breakdown_consistent(result: SolveResult) -> None:
@@ -659,11 +795,36 @@ def test_benchmark_json_payloads_include_results_and_summaries() -> None:
     encoded_results = json.loads(json.dumps(results_payload))
     encoded_comparisons = json.loads(json.dumps(comparisons_payload))
 
+    _assert_benchmark_results_payload_valid(encoded_results)
+    _assert_benchmark_comparisons_payload_valid(encoded_comparisons)
     assert encoded_results["results"][0]["name"] == "small_fully_feasible"
     assert "relative_optimality_gap_percent" in encoded_results["results"][0]
     assert encoded_results["summary"]["case_count"] == 1
     assert encoded_comparisons["comparisons"][0]["name"] == "small_fully_feasible"
     assert "largest_branch_reduction" in encoded_comparisons["summary"]
+
+
+def test_benchmark_cli_json_output_is_complete_and_consistent() -> None:
+    payload = _run_benchmark_cli_json(
+        "--case",
+        "small_fully_feasible",
+        "--json",
+    )
+
+    _assert_benchmark_results_payload_valid(payload)
+    assert payload["results"][0]["name"] == "small_fully_feasible"
+
+
+def test_benchmark_cli_comparison_json_output_is_complete_and_consistent() -> None:
+    payload = _run_benchmark_cli_json(
+        "--case",
+        "small_fully_feasible",
+        "--compare-warm-start",
+        "--json",
+    )
+
+    _assert_benchmark_comparisons_payload_valid(payload)
+    assert payload["comparisons"][0]["name"] == "small_fully_feasible"
 
 
 def test_shift_length_hours_is_not_part_of_problem_data() -> None:
