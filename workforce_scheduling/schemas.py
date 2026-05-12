@@ -17,6 +17,10 @@ from .warm_start import with_warm_start_hints
 SCHEMA_VERSION = 1
 
 
+class SchemaValidationError(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class SolveOptions:
     time_limit_sec: float = 10.0
@@ -51,23 +55,33 @@ def solve_request_to_payload(
 
 
 def parse_solve_request(payload: Mapping[str, Any]) -> SolveRequest:
+    payload = _require_mapping(payload, "Solve request")
+    schema_version = payload.get("schema_version", SCHEMA_VERSION)
+    if schema_version != SCHEMA_VERSION:
+        raise SchemaValidationError(
+            f"Unsupported schema_version {schema_version}; expected {SCHEMA_VERSION}"
+        )
+
     problem_payload = payload.get("problem")
     if not isinstance(problem_payload, Mapping):
-        raise ValueError("Solve request must contain a problem object")
-
+        raise SchemaValidationError("Solve request must contain a problem object")
     options_payload = payload.get("options", {})
     if not isinstance(options_payload, Mapping):
-        raise ValueError("Solve request options must be an object")
+        raise SchemaValidationError("Solve request options must be an object")
 
     options = SolveOptions(
-        time_limit_sec=float(options_payload.get("time_limit_sec", 10.0)),
-        seed=int(options_payload.get("seed", 1)),
+        time_limit_sec=_float_option(options_payload, "time_limit_sec", 10.0),
+        seed=_int_option(options_payload, "seed", 1),
         use_warm_start=_bool_option(options_payload, "use_warm_start", False),
     )
-    return SolveRequest(
-        problem=problem_data_from_payload(problem_payload),
-        options=options,
-    )
+    try:
+        problem = problem_data_from_payload(problem_payload)
+    except SchemaValidationError:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SchemaValidationError(f"Invalid problem payload: {exc}") from exc
+
+    return SolveRequest(problem=problem, options=options)
 
 
 def solve_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
@@ -110,7 +124,74 @@ def _bool_option(
     value = payload.get(key, default)
     if isinstance(value, bool):
         return value
-    raise ValueError(f"Solve option {key} must be a boolean")
+    raise SchemaValidationError(f"Solve option {key} must be a boolean")
+
+
+def _float_option(
+    payload: Mapping[str, Any],
+    key: str,
+    default: float,
+) -> float:
+    value = payload.get(key, default)
+    if isinstance(value, bool):
+        raise SchemaValidationError(f"Solve option {key} must be numeric")
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise SchemaValidationError(
+            f"Solve option {key} must be numeric"
+        ) from exc
+
+
+def _int_option(
+    payload: Mapping[str, Any],
+    key: str,
+    default: int,
+) -> int:
+    value = payload.get(key, default)
+    if isinstance(value, bool):
+        raise SchemaValidationError(f"Solve option {key} must be an integer")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise SchemaValidationError(
+            f"Solve option {key} must be an integer"
+        ) from exc
+
+
+def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise SchemaValidationError(f"{label} must be an object")
+    return value
+
+
+def _required(payload: Mapping[str, Any], key: str, location: str) -> Any:
+    if key not in payload:
+        raise SchemaValidationError(f"Missing {location}.{key}")
+    return payload[key]
+
+
+def _require_list(value: Any, label: str) -> List[Any]:
+    if not isinstance(value, list):
+        raise SchemaValidationError(f"{label} must be a list")
+    return value
+
+
+def _bool_value(value: Any, label: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise SchemaValidationError(f"{label} values must be booleans")
+
+
+def _employee_records(payload: Mapping[str, Any]) -> List[Mapping[str, Any]]:
+    employees = _require_list(
+        _required(payload, "employees", "problem"),
+        "problem.employees",
+    )
+    return [
+        _require_mapping(employee, "employee record")
+        for employee in employees
+    ]
 
 
 def problem_data_to_payload(data: ProblemData) -> Dict[str, Any]:
@@ -140,22 +221,49 @@ def problem_data_to_payload(data: ProblemData) -> Dict[str, Any]:
 
 
 def problem_data_from_payload(payload: Mapping[str, Any]) -> ProblemData:
-    roles = [str(role) for role in payload["roles"]]
-    days = [int(day) for day in payload["days"]]
-    shifts = [str(shift) for shift in payload["shifts"]]
+    payload = _require_mapping(payload, "problem")
+    roles = [
+        str(role)
+        for role in _require_list(
+            _required(payload, "roles", "problem"),
+            "problem.roles",
+        )
+    ]
+    days = [
+        int(day)
+        for day in _require_list(_required(payload, "days", "problem"), "problem.days")
+    ]
+    shifts = [
+        str(shift)
+        for shift in _require_list(
+            _required(payload, "shifts", "problem"),
+            "problem.shifts",
+        )
+    ]
     employees = [
         Employee(
-            employee_id=int(employee["employee_id"]),
-            name=str(employee["name"]),
-            roles=tuple(str(role) for role in employee["roles"]),
-            hourly_cost=int(employee["hourly_cost"]),
-            max_weekly_hours=int(employee["max_weekly_hours"]),
+            employee_id=int(_required(employee, "employee_id", "employee")),
+            name=str(_required(employee, "name", "employee")),
+            roles=tuple(
+                str(role)
+                for role in _require_list(
+                    _required(employee, "roles", "employee"),
+                    "employee.roles",
+                )
+            ),
+            hourly_cost=int(_required(employee, "hourly_cost", "employee")),
+            max_weekly_hours=int(
+                _required(employee, "max_weekly_hours", "employee")
+            ),
             availability=[
-                [bool(available) for available in day]
-                for day in employee["availability"]
+                [_bool_value(available, "employee.availability") for available in day]
+                for day in _require_list(
+                    _required(employee, "availability", "employee"),
+                    "employee.availability",
+                )
             ],
         )
-        for employee in payload["employees"]
+        for employee in _employee_records(payload)
     ]
 
     demand = {
@@ -166,20 +274,27 @@ def problem_data_from_payload(payload: Mapping[str, Any]) -> ProblemData:
         for day in days
     }
     seen_demand_keys: set[Tuple[int, int, str]] = set()
-    for record in payload.get("demand", []):
+    demand_records = _require_list(payload.get("demand", []), "problem.demand")
+    for record in demand_records:
+        record = _require_mapping(record, "demand record")
         day = int(record["day"])
         shift = int(record["shift"])
         role = str(record["role"])
         key = (day, shift, role)
         if key in seen_demand_keys:
-            raise ValueError(f"Duplicate demand record {key}")
+            raise SchemaValidationError(f"Duplicate demand record {key}")
         if day not in demand or shift not in demand[day] or role not in roles:
-            raise ValueError(f"Demand record references unknown slot {key}")
+            raise SchemaValidationError(f"Demand record references unknown slot {key}")
         seen_demand_keys.add(key)
         demand[day][shift][role] = int(record["required"])
 
     hint_assignments: Dict[Tuple[int, int, int, str], int] = {}
-    for record in payload.get("hint_assignments", []):
+    hint_records = _require_list(
+        payload.get("hint_assignments", []),
+        "problem.hint_assignments",
+    )
+    for record in hint_records:
+        record = _require_mapping(record, "hint assignment record")
         key = (
             int(record["employee_id"]),
             int(record["day"]),
@@ -187,7 +302,7 @@ def problem_data_from_payload(payload: Mapping[str, Any]) -> ProblemData:
             str(record["role"]),
         )
         if key in hint_assignments:
-            raise ValueError(f"Duplicate hint assignment record {key}")
+            raise SchemaValidationError(f"Duplicate hint assignment record {key}")
         hint_assignments[key] = int(record.get("value", 1))
 
     return ProblemData(
@@ -195,11 +310,25 @@ def problem_data_from_payload(payload: Mapping[str, Any]) -> ProblemData:
         roles=roles,
         days=days,
         shifts=shifts,
-        shift_start_hours=[int(hour) for hour in payload["shift_start_hours"]],
-        shift_end_hours=[int(hour) for hour in payload["shift_end_hours"]],
-        min_rest_hours=int(payload["min_rest_hours"]),
-        max_consecutive_days=int(payload["max_consecutive_days"]),
-        shortage_penalty=int(payload["shortage_penalty"]),
+        shift_start_hours=[
+            int(hour)
+            for hour in _require_list(
+                _required(payload, "shift_start_hours", "problem"),
+                "problem.shift_start_hours",
+            )
+        ],
+        shift_end_hours=[
+            int(hour)
+            for hour in _require_list(
+                _required(payload, "shift_end_hours", "problem"),
+                "problem.shift_end_hours",
+            )
+        ],
+        min_rest_hours=int(_required(payload, "min_rest_hours", "problem")),
+        max_consecutive_days=int(
+            _required(payload, "max_consecutive_days", "problem")
+        ),
+        shortage_penalty=int(_required(payload, "shortage_penalty", "problem")),
         demand=demand,
         hint_assignments=hint_assignments,
     )

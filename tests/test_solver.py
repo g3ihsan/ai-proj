@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from itertools import product
+from pathlib import Path
 from typing import Dict, List, Tuple
 import json
 import os
@@ -36,6 +37,7 @@ from workforce_scheduling.solve import (
     validate_solution,
 )
 from workforce_scheduling.schemas import (
+    SchemaValidationError,
     parse_solve_request,
     solve_payload,
     solve_request_to_payload,
@@ -973,7 +975,7 @@ def test_solve_payload_returns_error_envelope_for_invalid_request() -> None:
     assert response_payload == {
         "ok": False,
         "error": {
-            "type": "ValueError",
+            "type": "SchemaValidationError",
             "message": "Solve request must contain a problem object",
         },
     }
@@ -988,8 +990,23 @@ def test_solve_payload_rejects_non_boolean_use_warm_start() -> None:
     assert response_payload == {
         "ok": False,
         "error": {
-            "type": "ValueError",
+            "type": "SchemaValidationError",
             "message": "Solve option use_warm_start must be a boolean",
+        },
+    }
+
+
+def test_solve_payload_rejects_unsupported_schema_version() -> None:
+    payload = solve_request_to_payload(_small_fully_feasible_problem())
+    payload["schema_version"] = 999
+
+    response_payload = solve_payload(payload)
+
+    assert response_payload == {
+        "ok": False,
+        "error": {
+            "type": "SchemaValidationError",
+            "message": "Unsupported schema_version 999; expected 1",
         },
     }
 
@@ -1025,6 +1042,19 @@ def test_solve_payload_use_warm_start_matches_existing_hint_path() -> None:
     assert response_payload["result"]["objective_breakdown"][
         "total_objective_value"
     ] == direct_result.objective_breakdown.total_objective_value
+
+
+def test_solve_payload_accepts_checked_in_request_fixture() -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
+    response_payload = solve_payload(json.loads(fixture_path.read_text()))
+
+    assert response_payload["ok"]
+    assert response_payload["result"]["metrics"]["status"] == "OPTIMAL"
+    assert response_payload["result"]["objective_breakdown"]["total_shortage"] == 0
+    assert response_payload["result"]["assignments"] == [
+        {"employee_id": 0, "day": 0, "shift": 0, "role": "worker"},
+        {"employee_id": 1, "day": 1, "shift": 0, "role": "worker"},
+    ]
 
 
 def test_cli_request_json_writes_response_envelope(tmp_path) -> None:
@@ -1090,7 +1120,7 @@ def test_problem_schema_rejects_duplicate_demand_records() -> None:
     payload = solve_request_to_payload(_small_fully_feasible_problem())
     payload["problem"]["demand"].append(dict(payload["problem"]["demand"][0]))
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(SchemaValidationError) as exc_info:
         parse_solve_request(payload)
 
     assert "Duplicate demand record" in str(exc_info.value)

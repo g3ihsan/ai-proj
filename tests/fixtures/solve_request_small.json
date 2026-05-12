@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "problem": {
+    "employees": [
+      {
+        "employee_id": 0,
+        "name": "E0",
+        "roles": ["worker"],
+        "hourly_cost": 20,
+        "max_weekly_hours": 40,
+        "availability": [[true], [true]]
+      },
+      {
+        "employee_id": 1,
+        "name": "E1",
+        "roles": ["worker"],
+        "hourly_cost": 20,
+        "max_weekly_hours": 40,
+        "availability": [[true], [true]]
+      }
+    ],
+    "roles": ["worker"],
+    "days": [0, 1],
+    "shifts": ["shift_0"],
+    "shift_start_hours": [8],
+    "shift_end_hours": [16],
+    "min_rest_hours": 8,
+    "max_consecutive_days": 5,
+    "shortage_penalty": 1000,
+    "demand": [
+      {"day": 0, "shift": 0, "role": "worker", "required": 1},
+      {"day": 1, "shift": 0, "role": "worker", "required": 1}
+    ],
+    "hint_assignments": []
+  },
+  "options": {
+    "time_limit_sec": 5.0,
+    "seed": 1,
+    "use_warm_start": false
+  }
+}

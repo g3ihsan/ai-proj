@@ -18,6 +18,9 @@ Run a JSON solve request through the file boundary:
 PYTHONPATH=. python -m workforce_scheduling.cli --request-json request.json --response-json response.json
 ```
 
+The checked-in fixture `tests/fixtures/solve_request_small.json` is a minimal
+valid request for contract tests.
+
 Run benchmark fixtures:
 
 ```bash
