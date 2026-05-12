@@ -58,15 +58,22 @@ class ObjectiveBreakdown:
 
 @dataclass
 class SlotCandidateAnalysis:
+    # Post-solve marginal analysis for one demanded slot. This explains the
+    # final roster locally; it is not a formal global infeasibility proof.
     day: int
     shift: int
     role: str
     required_count: int
     assigned_count: int
     shortage_count: int
+    # Count of employees currently assignable to this slot after considering
+    # the final solved schedule and hard scheduling rules.
     candidate_employee_count: int
     assigned_employee_ids: List[int]
+    # Employees eligible by role and availability before final-schedule blockers.
     could_work_employee_ids: List[int]
+    role_available_employee_ids: List[int]
+    currently_assignable_employee_ids: List[int]
     blocked_employee_ids_by_reason: Dict[str, List[int]]
 
 
@@ -469,6 +476,10 @@ def compute_demanded_slot_diagnostics(
                         candidate_employee_count=len(candidate_employee_ids),
                         assigned_employee_ids=assigned_employee_ids,
                         could_work_employee_ids=sorted(could_work_employee_ids),
+                        role_available_employee_ids=sorted(could_work_employee_ids),
+                        currently_assignable_employee_ids=sorted(
+                            candidate_employee_ids
+                        ),
                         blocked_employee_ids_by_reason={
                             reason: sorted(employee_ids)
                             for reason, employee_ids in blocked_by_reason.items()
@@ -483,6 +494,9 @@ def compute_assignment_explanations(
     data: ProblemData,
     assignments: List[Assignment],
 ) -> List[AssignmentExplanation]:
+    # Solver-produced assignments are expected to reference valid employees and
+    # shifts. validate_solution remains the defensive entry point for malformed
+    # external assignment lists.
     employee_index = {employee.employee_id: employee for employee in data.employees}
     assigned_by_employee = _assignments_by_employee(assignments)
     weekly_hours = _assigned_hours_by_employee(data, assignments)

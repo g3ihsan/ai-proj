@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from itertools import product
 from typing import Dict, List, Tuple
 
 import pytest
@@ -8,6 +9,8 @@ from workforce_scheduling.data import Employee, ProblemData, generate_synthetic_
 from workforce_scheduling.solve import (
     Assignment,
     ObjectiveBreakdown,
+    SolveResult,
+    compute_objective_breakdown,
     solve,
     validate_solution,
 )
@@ -172,6 +175,152 @@ def _assert_objective_total_matches_components(
     )
 
 
+def _raw_fairness_value(breakdown: ObjectiveBreakdown) -> int:
+    return (
+        breakdown.workload_fairness_value
+        + breakdown.weekend_fairness_value
+        + breakdown.shift_distribution_fairness_value
+    )
+
+
+def _assert_objective_breakdown_consistent(result: SolveResult) -> None:
+    breakdown = result.objective_breakdown
+    assert breakdown.total_shortage == sum(result.shortages.values())
+    assert breakdown.fairness_objective_value == (
+        _raw_fairness_value(breakdown)
+        * result.objective_metadata["fairness_priority_weight"]
+    )
+    assert breakdown.shortage_objective_value == (
+        breakdown.total_shortage
+        * result.objective_metadata["shortage_priority_weight"]
+    )
+    _assert_objective_total_matches_components(breakdown)
+    assert breakdown.total_objective_value == int(result.metrics.objective_value)
+
+
+def _assert_diagnostics_consistent(
+    data: ProblemData,
+    result: SolveResult,
+) -> None:
+    employee_ids = {employee.employee_id for employee in data.employees}
+    assignments_by_slot: Dict[Tuple[int, int, str], List[Assignment]] = {}
+    for assignment in result.assignments:
+        assignments_by_slot.setdefault(
+            (assignment.day, assignment.shift, assignment.role),
+            [],
+        ).append(assignment)
+
+    for diagnostic in result.demanded_slot_diagnostics:
+        key = (diagnostic.day, diagnostic.shift, diagnostic.role)
+        matching_assignments = assignments_by_slot.get(key, [])
+        matching_employee_ids = sorted(
+            assignment.employee_id for assignment in matching_assignments
+        )
+        assert diagnostic.assigned_count == len(matching_assignments)
+        assert diagnostic.assigned_employee_ids == matching_employee_ids
+        assert diagnostic.shortage_count == max(
+            0,
+            diagnostic.required_count - diagnostic.assigned_count,
+        )
+        assert diagnostic.candidate_employee_count == len(
+            diagnostic.currently_assignable_employee_ids
+        )
+        assert diagnostic.could_work_employee_ids == diagnostic.role_available_employee_ids
+        assert diagnostic.assigned_employee_ids == sorted(
+            diagnostic.assigned_employee_ids
+        )
+        assert diagnostic.could_work_employee_ids == sorted(
+            diagnostic.could_work_employee_ids
+        )
+        assert diagnostic.currently_assignable_employee_ids == sorted(
+            diagnostic.currently_assignable_employee_ids
+        )
+
+        all_reported_ids = set(diagnostic.assigned_employee_ids)
+        all_reported_ids.update(diagnostic.could_work_employee_ids)
+        all_reported_ids.update(diagnostic.currently_assignable_employee_ids)
+        for reason, blocked_employee_ids in (
+            diagnostic.blocked_employee_ids_by_reason.items()
+        ):
+            assert blocked_employee_ids == sorted(blocked_employee_ids), reason
+            all_reported_ids.update(blocked_employee_ids)
+            assert not (
+                set(diagnostic.assigned_employee_ids) & set(blocked_employee_ids)
+            ), reason
+        assert all_reported_ids <= employee_ids
+
+
+def _brute_force_best_priority(
+    data: ProblemData,
+    objective_metadata: Dict[str, int],
+) -> Tuple[Tuple[int, int, int], List[Assignment], ObjectiveBreakdown]:
+    demanded_slots = [
+        (day, shift, role)
+        for day in data.days
+        for shift in range(len(data.shifts))
+        for role in data.roles
+        if data.demand[day][shift][role] > 0
+    ]
+    assert all(data.demand[day][shift][role] == 1 for day, shift, role in demanded_slots)
+
+    choices = [None] + [employee.employee_id for employee in data.employees]
+    best: Tuple[Tuple[int, int, int], List[Assignment], ObjectiveBreakdown] | None = None
+
+    for assignment_choices in product(choices, repeat=len(demanded_slots)):
+        assignments = [
+            Assignment(
+                employee_id=employee_id,
+                day=day,
+                shift=shift,
+                role=role,
+            )
+            for (day, shift, role), employee_id in zip(
+                demanded_slots,
+                assignment_choices,
+            )
+            if employee_id is not None
+        ]
+        shortages = _shortages_for_assignments(data, assignments)
+        if validate_solution(data, assignments, shortages):
+            continue
+        breakdown = compute_objective_breakdown(
+            data,
+            assignments,
+            shortages,
+            objective_metadata,
+        )
+        priority = (
+            breakdown.total_shortage,
+            _raw_fairness_value(breakdown),
+            breakdown.labor_cost_value,
+        )
+        if best is None or priority < best[0]:
+            best = (priority, assignments, breakdown)
+
+    assert best is not None
+    return best
+
+
+def _shortages_for_assignments(
+    data: ProblemData,
+    assignments: List[Assignment],
+) -> Dict[Tuple[int, int, str], int]:
+    coverage: Dict[Tuple[int, int, str], int] = {}
+    for assignment in assignments:
+        key = (assignment.day, assignment.shift, assignment.role)
+        coverage[key] = coverage.get(key, 0) + 1
+
+    return {
+        (day, shift, role): max(
+            0,
+            data.demand[day][shift][role] - coverage.get((day, shift, role), 0),
+        )
+        for day in data.days
+        for shift in range(len(data.shifts))
+        for role in data.roles
+    }
+
+
 def test_deterministic_solve() -> None:
     data = generate_synthetic_data(seed=7)
     result_a = solve(data, time_limit_sec=5.0, seed=7)
@@ -195,6 +344,8 @@ def test_deterministic_solve() -> None:
         + result_a.objective_breakdown.fairness_objective_value
         + result_a.objective_breakdown.labor_cost_value
     )
+    _assert_objective_breakdown_consistent(result_a)
+    _assert_diagnostics_consistent(data, result_a)
 
 
 def test_shift_length_hours_is_not_part_of_problem_data() -> None:
@@ -357,6 +508,30 @@ def test_labor_cost_breaks_ties_when_shortage_and_fairness_are_equal() -> None:
     assert result.objective_breakdown.shift_distribution_fairness_value == 1
     assert result.objective_breakdown.labor_cost_value == 8
     assert not result.violations
+
+
+def test_tiny_brute_force_oracle_matches_cp_sat_priority() -> None:
+    data = _fairness_vs_cost_problem()
+    result = solve(data, time_limit_sec=5.0, seed=1)
+    oracle_priority, oracle_assignments, oracle_breakdown = _brute_force_best_priority(
+        data,
+        result.objective_metadata,
+    )
+
+    result_priority = (
+        result.objective_breakdown.total_shortage,
+        _raw_fairness_value(result.objective_breakdown),
+        result.objective_breakdown.labor_cost_value,
+    )
+    assert result_priority == oracle_priority
+    assert _assignment_tuples(result.assignments) == _assignment_tuples(
+        oracle_assignments
+    )
+    assert result.objective_breakdown.total_shortage == oracle_breakdown.total_shortage
+    assert _raw_fairness_value(result.objective_breakdown) == _raw_fairness_value(
+        oracle_breakdown
+    )
+    assert result.objective_breakdown.labor_cost_value == oracle_breakdown.labor_cost_value
 
 
 def test_weekend_fairness_spreads_weekend_assignments_when_possible() -> None:
@@ -830,6 +1005,9 @@ def test_shortage_diagnostics_reports_correct_shortage_slot() -> None:
     assert diagnostic.shortage_count == 1
     assert diagnostic.assigned_employee_ids == [0]
     assert diagnostic.candidate_employee_count == 1
+    assert diagnostic.role_available_employee_ids == [0]
+    assert diagnostic.currently_assignable_employee_ids == [0]
+    _assert_diagnostics_consistent(data, result)
 
 
 def test_shortage_diagnostics_identifies_unavailable_and_missing_role() -> None:
@@ -855,6 +1033,8 @@ def test_shortage_diagnostics_identifies_unavailable_and_missing_role() -> None:
     assert diagnostic.blocked_employee_ids_by_reason["unavailable"] == [1]
     assert diagnostic.blocked_employee_ids_by_reason["missing_role"] == [2]
     assert diagnostic.could_work_employee_ids == [0]
+    assert diagnostic.role_available_employee_ids == [0]
+    assert diagnostic.currently_assignable_employee_ids == [0]
 
 
 def test_shortage_diagnostics_identifies_rest_window_blocker() -> None:
@@ -905,6 +1085,17 @@ def test_demanded_slot_candidate_analysis_includes_full_coverage_slots() -> None
         diagnostic.required_count == diagnostic.assigned_count
         for diagnostic in result.demanded_slot_diagnostics
     )
+    _assert_diagnostics_consistent(data, result)
+
+
+def test_diagnostics_are_consistent_and_deterministic() -> None:
+    data = _constrained_rest_window_problem()
+    result_a = solve(data, time_limit_sec=5.0, seed=1)
+    result_b = solve(data, time_limit_sec=5.0, seed=1)
+
+    _assert_diagnostics_consistent(data, result_a)
+    assert result_a.demanded_slot_diagnostics == result_b.demanded_slot_diagnostics
+    assert result_a.shortage_diagnostics == result_b.shortage_diagnostics
 
 
 def test_assignment_explanations_calculate_duration_and_labor_cost() -> None:
