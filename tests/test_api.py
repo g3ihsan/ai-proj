@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Dict
 import httpx
 import pytest
 
-from workforce_scheduling.api import app, solve_job_store
+from workforce_scheduling.api import MAX_JSON_REQUEST_BYTES, app, solve_job_store
 from workforce_scheduling.jobs import (
     InMemorySolveJobStore,
     JobCapacityError,
@@ -149,7 +150,14 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
         },
         "response_envelope": {
             "success": {"ok": True, "result": "SolveResult payload"},
-            "error": {"ok": False, "error": {"type": "string", "message": "string"}},
+            "error": {
+                "ok": False,
+                "error": {
+                    "type": "string",
+                    "message": "string",
+                    "request_id": "string",
+                },
+            },
         },
         "job_execution": {
             "backend": "in_memory_thread_pool",
@@ -157,7 +165,22 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "max_active_jobs": 10,
             "max_retained_jobs": 100,
         },
+        "request_limits": {
+            "max_json_request_bytes": 1_000_000,
+        },
     }
+    assert response.headers["x-request-id"]
+
+
+def test_api_preserves_incoming_request_id() -> None:
+    response = _api_request(
+        "GET",
+        "/health",
+        headers={"X-Request-ID": "req-123"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] == "req-123"
 
 
 def test_solve_job_executor_is_bounded() -> None:
@@ -231,15 +254,15 @@ def test_api_solve_job_boundary_returns_429_when_active_capacity_is_full() -> No
         )
 
         assert response.status_code == 429
-        assert response.json() == {
-            "ok": False,
-            "error": {
-                "type": "JobCapacityError",
-                "message": (
-                    f"In-memory solve job capacity is full at {MAX_ACTIVE_JOBS} "
-                    "active jobs"
-                ),
-            },
+        response_payload = response.json()
+        assert response_payload["ok"] is False
+        assert response_payload["error"] == {
+            "type": "JobCapacityError",
+            "message": (
+                f"In-memory solve job capacity is full at {MAX_ACTIVE_JOBS} "
+                "active jobs"
+            ),
+            "request_id": response.headers["x-request-id"],
         }
     finally:
         solve_job_store.clear()
@@ -261,6 +284,7 @@ def test_api_solve_csv_endpoint_returns_roster_csv() -> None:
     )
 
     assert response.status_code == 200
+    assert response.headers["x-request-id"]
     assert response.headers["content-type"].startswith("text/csv")
     assert response.headers["content-disposition"] == (
         'attachment; filename="roster.csv"'
@@ -311,8 +335,54 @@ def test_api_solve_csv_endpoint_returns_error_envelope_for_invalid_csv() -> None
         "error": {
             "type": "CsvAdapterError",
             "message": "shifts row 3 missing shift_name",
+            "request_id": response.headers["x-request-id"],
         },
     }
+
+
+def test_api_json_routes_reject_large_request_body() -> None:
+    response = _api_request(
+        "POST",
+        "/solve",
+        content=" " * (MAX_JSON_REQUEST_BYTES + 1),
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {
+        "ok": False,
+        "error": {
+            "type": "RequestTooLargeError",
+            "message": f"JSON request body exceeds {MAX_JSON_REQUEST_BYTES} bytes",
+            "request_id": response.headers["x-request-id"],
+        },
+    }
+
+
+def test_api_logs_request_and_solve_route_without_payloads(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="workforce_scheduling.api")
+
+    response = _api_request(
+        "POST",
+        "/solve",
+        json_payload={"options": {"seed": 1}},
+        headers={"X-Request-ID": "log-request-1"},
+    )
+
+    assert response.status_code == 400
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "api_request method=POST path=/solve status_code=400 "
+        "request_id=log-request-1 duration_ms="
+        in message
+        for message in messages
+    )
+    assert any(
+        "solve_route route=solve method=POST path=/solve status_code=400 "
+        "request_id=log-request-1 ok=False error_type=SchemaValidationError"
+        in message
+        for message in messages
+    )
 
 
 def test_api_solve_job_boundary_returns_submitted_job_and_result() -> None:
@@ -390,5 +460,6 @@ def test_api_solve_job_status_returns_error_for_unknown_job() -> None:
         "error": {
             "type": "JobNotFoundError",
             "message": "Unknown solve job missing",
+            "request_id": response.headers["x-request-id"],
         },
     }

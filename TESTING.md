@@ -91,6 +91,9 @@ HTTP endpoints:
 `demand_csv`, plus the same CSV solve settings used by the CLI:
 `min_rest_hours`, `max_consecutive_days`, `shortage_penalty`, `time_limit_sec`,
 `seed`, and `use_warm_start`. It returns the standard roster CSV as `text/csv`.
+All HTTP responses include `X-Request-ID`. Incoming `X-Request-ID` values are
+preserved; otherwise the API generates one. JSON solve routes reject request
+bodies larger than 1,000,000 bytes before parsing.
 
 Run benchmark fixtures:
 

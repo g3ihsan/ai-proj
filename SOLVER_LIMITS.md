@@ -94,12 +94,18 @@ It exposes `GET /health`, `GET /metadata`, `POST /solve`, `POST /solve-csv`,
 `POST /solve-jobs`, and `GET /solve-jobs/{job_id}`. The synchronous solve
 endpoint preserves the existing success/error envelope. The CSV upload endpoint
 is a thin multipart wrapper around the same three-file CSV adapter and returns
-the standard roster CSV as `text/csv`. The job endpoints are an in-process,
-in-memory prototype for the future async contract only; jobs disappear when the
-process restarts and are not a durable queue. Submitted jobs run in the current
-process through a bounded `ThreadPoolExecutor(max_workers=2)`, not a production
-worker system. The in-memory store retains at most 100 job records. When full,
-it prunes oldest terminal jobs first; if all retained jobs are still active, new
+the standard roster CSV as `text/csv`. Every HTTP response includes
+`X-Request-ID`; incoming request IDs are preserved, and missing values are
+generated per request. Error envelopes include the request ID where practical.
+The API logs request method, path, status code, request ID, duration, and
+solve-route success/error facts without logging request bodies, uploaded CSV
+content, or full solver responses. JSON solve routes reject bodies larger than
+1,000,000 bytes before parsing. The job endpoints are an in-process, in-memory
+prototype for the future async contract only; jobs disappear when the process
+restarts and are not a durable queue. Submitted jobs run in the current process
+through a bounded `ThreadPoolExecutor(max_workers=2)`, not a production worker
+system. The in-memory store retains at most 100 job records. When full, it
+prunes oldest terminal jobs first; if all retained jobs are still active, new
 job submissions are rejected instead of evicting queued or running work. It also
 allows at most 10 active jobs across queued and running states, so API callers
 cannot create an unbounded in-process backlog. Job payloads include

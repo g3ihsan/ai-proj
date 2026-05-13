@@ -1344,6 +1344,7 @@ def test_api_solve_endpoint_returns_existing_error_envelope() -> None:
         "error": {
             "type": "SchemaValidationError",
             "message": "Solve request must contain a problem object",
+            "request_id": response.headers["x-request-id"],
         },
     }
 
@@ -1360,6 +1361,7 @@ def test_api_solve_endpoint_rejects_unsafe_options_before_solving() -> None:
         "error": {
             "type": "SchemaValidationError",
             "message": "Solve option time_limit_sec must be > 0 and <= 30",
+            "request_id": response.headers["x-request-id"],
         },
     }
 
