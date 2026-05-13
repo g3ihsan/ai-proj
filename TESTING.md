@@ -93,7 +93,8 @@ HTTP endpoints:
 `seed`, and `use_warm_start`. It returns the standard roster CSV as `text/csv`.
 All HTTP responses include `X-Request-ID`. Incoming `X-Request-ID` values are
 preserved; otherwise the API generates one. JSON solve routes reject request
-bodies larger than 1,000,000 bytes before parsing.
+bodies larger than 1,000,000 bytes before parsing. `POST /solve-csv` rejects
+any uploaded CSV file larger than 1,000,000 bytes.
 
 Run benchmark fixtures:
 

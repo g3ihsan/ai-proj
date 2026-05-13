@@ -42,12 +42,17 @@ from .schemas import (
 
 REQUEST_ID_HEADER = "X-Request-ID"
 MAX_JSON_REQUEST_BYTES = 1_000_000
+MAX_CSV_UPLOAD_BYTES = 1_000_000
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Workforce Scheduling Solver")
 solve_job_store = InMemorySolveJobStore()
 
 
 class RequestTooLargeError(Exception):
+    pass
+
+
+class CsvUploadTooLargeError(Exception):
     pass
 
 
@@ -141,6 +146,7 @@ async def metadata() -> dict[str, Any]:
         },
         "request_limits": {
             "max_json_request_bytes": MAX_JSON_REQUEST_BYTES,
+            "max_csv_upload_bytes": MAX_CSV_UPLOAD_BYTES,
         },
     }
 
@@ -182,9 +188,13 @@ async def solve_csv_endpoint(
             demand_path = temp_path / "demand.csv"
             output_path = temp_path / "roster.csv"
 
-            await _write_upload_file(employees_csv, employees_path)
-            await _write_upload_file(shifts_csv, shifts_path)
-            await _write_upload_file(demand_csv, demand_path)
+            await _write_upload_file(
+                employees_csv,
+                employees_path,
+                "employees_csv",
+            )
+            await _write_upload_file(shifts_csv, shifts_path, "shifts_csv")
+            await _write_upload_file(demand_csv, demand_path, "demand_csv")
 
             request_payload = payload_from_csv_files(
                 employees_path,
@@ -227,8 +237,13 @@ async def solve_csv_endpoint(
             return response
     except Exception as exc:
         response_payload = _error_payload_for_request(exc, request)
-        _log_solve_route(request, "solve_csv", response_payload, 400)
-        return JSONResponse(content=response_payload, status_code=400)
+        status_code = (
+            413
+            if _error_type(response_payload) == "CsvUploadTooLargeError"
+            else 400
+        )
+        _log_solve_route(request, "solve_csv", response_payload, status_code)
+        return JSONResponse(content=response_payload, status_code=status_code)
 
 
 @app.post("/solve-jobs")
@@ -278,8 +293,19 @@ async def get_solve_job(job_id: str, request: Request) -> JSONResponse:
     return JSONResponse(content=response_payload)
 
 
-async def _write_upload_file(upload: UploadFile, path: Path) -> None:
-    path.write_bytes(await upload.read())
+async def _write_upload_file(upload: UploadFile, path: Path, label: str) -> None:
+    bytes_written = 0
+    with open(path, "wb") as handle:
+        while True:
+            chunk = await upload.read(64 * 1024)
+            if not chunk:
+                return
+            bytes_written += len(chunk)
+            if bytes_written > MAX_CSV_UPLOAD_BYTES:
+                raise CsvUploadTooLargeError(
+                    f"{label} exceeds {MAX_CSV_UPLOAD_BYTES} bytes"
+                )
+            handle.write(chunk)
 
 
 async def _json_request_payload(request: Request) -> Any:

@@ -13,7 +13,12 @@ from typing import Dict
 import httpx
 import pytest
 
-from workforce_scheduling.api import MAX_JSON_REQUEST_BYTES, app, solve_job_store
+from workforce_scheduling.api import (
+    MAX_CSV_UPLOAD_BYTES,
+    MAX_JSON_REQUEST_BYTES,
+    app,
+    solve_job_store,
+)
 from workforce_scheduling.jobs import (
     InMemorySolveJobStore,
     JobCapacityError,
@@ -167,6 +172,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
         },
         "request_limits": {
             "max_json_request_bytes": 1_000_000,
+            "max_csv_upload_bytes": 1_000_000,
         },
     }
     assert response.headers["x-request-id"]
@@ -335,6 +341,38 @@ def test_api_solve_csv_endpoint_returns_error_envelope_for_invalid_csv() -> None
         "error": {
             "type": "CsvAdapterError",
             "message": "shifts row 3 missing shift_name",
+            "request_id": response.headers["x-request-id"],
+        },
+    }
+
+
+def test_api_solve_csv_endpoint_rejects_oversized_upload() -> None:
+    files = _csv_upload_files()
+    files["employees_csv"] = (
+        "employees.csv",
+        "x" * (MAX_CSV_UPLOAD_BYTES + 1),
+        "text/csv",
+    )
+
+    response = _api_request(
+        "POST",
+        "/solve-csv",
+        data={
+            "min_rest_hours": "8",
+            "max_consecutive_days": "5",
+            "shortage_penalty": "1000",
+            "time_limit_sec": "5",
+            "seed": "1",
+        },
+        files=files,
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {
+        "ok": False,
+        "error": {
+            "type": "CsvUploadTooLargeError",
+            "message": f"employees_csv exceeds {MAX_CSV_UPLOAD_BYTES} bytes",
             "request_id": response.headers["x-request-id"],
         },
     }
