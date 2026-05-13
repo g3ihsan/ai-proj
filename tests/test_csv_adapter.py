@@ -8,6 +8,7 @@ from pathlib import Path
 
 from workforce_scheduling.csv_adapter import (
     CsvAdapterError,
+    ROSTER_OUTPUT_HEADER,
     payload_from_csv_files,
     problem_data_from_csv_files,
     write_roster_solution_csv,
@@ -89,9 +90,14 @@ def test_csv_adapter_builds_problem_data_and_writes_roster(tmp_path: Path) -> No
 
     rows = list(csv.DictReader(roster_csv.open()))
     assert len(rows) == 4
-    assert {row["shift"] for row in rows} <= {"morning", "evening"}
-    assert {row["employee_name"] for row in rows} <= {"Asha", "Ravi", "Meera"}
-    assert all(row["shortage_count"] == "0" for row in rows)
+    assert list(rows[0].keys()) == ROSTER_OUTPUT_HEADER
+    assert {row["record_type"] for row in rows} == {"assignment"}
+    assert {row["shift"] for row in rows} <= {"0", "1"}
+    assert {row["shift_name"] for row in rows} <= {"morning", "evening"}
+    assert {row["name"] for row in rows} <= {"Asha", "Ravi", "Meera"}
+    assert all(row["status"] == "assigned" for row in rows)
+    assert all(row["value"] == "1" for row in rows)
+    assert all(row["message"] == "" for row in rows)
 
 
 def test_cli_solves_from_three_csv_files_and_writes_roster(tmp_path: Path) -> None:
@@ -136,6 +142,28 @@ def test_cli_solves_from_three_csv_files_and_writes_roster(tmp_path: Path) -> No
     assert "CSV roster written to:" in completed.stdout
     rows = list(csv.DictReader(roster_csv.open()))
     assert len(rows) == 4
+    assert list(rows[0].keys()) == ROSTER_OUTPUT_HEADER
+
+
+def test_checked_in_csv_examples_parse_and_solve(tmp_path: Path) -> None:
+    examples_dir = Path("examples/csv")
+    roster_csv = tmp_path / "roster.csv"
+
+    data = problem_data_from_csv_files(
+        examples_dir / "employees.csv",
+        examples_dir / "shifts.csv",
+        examples_dir / "demand.csv",
+        min_rest_hours=8,
+        max_consecutive_days=5,
+        shortage_penalty=1000,
+    )
+    result = solve(data, time_limit_sec=5.0, seed=1)
+    write_roster_solution_csv(roster_csv, data, result.assignments, result.shortages)
+
+    rows = list(csv.DictReader(roster_csv.open()))
+    assert result.metrics.status == "OPTIMAL"
+    assert result.objective_breakdown.total_shortage == 0
+    assert list(rows[0].keys()) == ROSTER_OUTPUT_HEADER
 
 
 def test_csv_adapter_rejects_missing_explicit_availability_column(
@@ -167,6 +195,34 @@ def test_csv_adapter_rejects_missing_explicit_availability_column(
         )
     except CsvAdapterError as exc:
         assert "missing available_day1_shift1" in str(exc)
+    else:
+        raise AssertionError("Expected CsvAdapterError")
+
+
+def test_csv_adapter_rejects_missing_shift_name(tmp_path: Path) -> None:
+    employees_csv, shifts_csv, demand_csv = _write_csv_fixture(tmp_path)
+    shifts_csv.write_text(
+        "\n".join(
+            [
+                "shift,shift_name,start_hour,end_hour",
+                "0,morning,8,16",
+                "1,,16,24",
+            ]
+        )
+        + "\n"
+    )
+
+    try:
+        problem_data_from_csv_files(
+            employees_csv,
+            shifts_csv,
+            demand_csv,
+            min_rest_hours=8,
+            max_consecutive_days=5,
+            shortage_penalty=1000,
+        )
+    except CsvAdapterError as exc:
+        assert "missing shift_name" in str(exc)
     else:
         raise AssertionError("Expected CsvAdapterError")
 
@@ -255,3 +311,47 @@ def test_csv_adapter_ignores_legacy_global_settings_in_shifts_csv(
     assert data.min_rest_hours == 8
     assert data.max_consecutive_days == 5
     assert data.shortage_penalty == 1000
+
+
+def test_csv_roster_output_includes_shortage_records(tmp_path: Path) -> None:
+    employees_csv, shifts_csv, demand_csv = _write_csv_fixture(tmp_path)
+    roster_csv = tmp_path / "roster.csv"
+    demand_csv.write_text(
+        "\n".join(
+            [
+                "day,shift,role,required",
+                "0,0,worker,1",
+                "0,1,supervisor,1",
+                "1,0,worker,1",
+                "1,1,worker,2",
+            ]
+        )
+        + "\n"
+    )
+
+    data = problem_data_from_csv_files(
+        employees_csv,
+        shifts_csv,
+        demand_csv,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+        shortage_penalty=1000,
+    )
+    result = solve(data, time_limit_sec=5.0, seed=1)
+    write_roster_solution_csv(roster_csv, data, result.assignments, result.shortages)
+
+    rows = list(csv.DictReader(roster_csv.open()))
+    shortage_rows = [row for row in rows if row["record_type"] == "shortage"]
+
+    assert list(rows[0].keys()) == ROSTER_OUTPUT_HEADER
+    assert len(shortage_rows) == 1
+    shortage_row = shortage_rows[0]
+    assert shortage_row["employee_id"] == ""
+    assert shortage_row["name"] == ""
+    assert shortage_row["day"] == "1"
+    assert shortage_row["shift"] in {"0", "1"}
+    assert shortage_row["shift_name"] in {"morning", "evening"}
+    assert shortage_row["role"] == "worker"
+    assert shortage_row["status"] == "unfilled"
+    assert shortage_row["value"] == "1"
+    assert shortage_row["message"] == "Unfilled demand for 1 worker slot(s)"

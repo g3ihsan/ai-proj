@@ -12,6 +12,18 @@ from .solve import Assignment
 DEFAULT_MIN_REST_HOURS = 8
 DEFAULT_MAX_CONSECUTIVE_DAYS = 5
 DEFAULT_SHORTAGE_PENALTY = 1000
+ROSTER_OUTPUT_HEADER = [
+    "record_type",
+    "employee_id",
+    "name",
+    "day",
+    "shift",
+    "shift_name",
+    "role",
+    "status",
+    "value",
+    "message",
+]
 
 
 class CsvAdapterError(ValueError):
@@ -106,37 +118,26 @@ def write_roster_solution_csv(
     shortages: Dict[Tuple[int, int, str], int],
 ) -> None:
     employee_names = {employee.employee_id: employee.name for employee in data.employees}
-    employee_costs = {
-        employee.employee_id: employee.hourly_cost
-        for employee in data.employees
-    }
 
     with open(path, "w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(
-            [
-                "day",
-                "shift",
-                "role",
-                "employee_id",
-                "employee_name",
-                "hourly_cost",
-                "shortage_count",
-            ]
-        )
+        writer.writerow(ROSTER_OUTPUT_HEADER)
         for assignment in sorted(
             assignments,
             key=lambda item: (item.day, item.shift, item.role, item.employee_id),
         ):
             writer.writerow(
                 [
-                    assignment.day,
-                    data.shifts[assignment.shift],
-                    assignment.role,
+                    "assignment",
                     assignment.employee_id,
                     employee_names[assignment.employee_id],
-                    employee_costs[assignment.employee_id],
-                    0,
+                    assignment.day,
+                    assignment.shift,
+                    data.shifts[assignment.shift],
+                    assignment.role,
+                    "assigned",
+                    1,
+                    "",
                 ]
             )
         for (day, shift, role), shortage_count in sorted(shortages.items()):
@@ -144,13 +145,16 @@ def write_roster_solution_csv(
                 continue
             writer.writerow(
                 [
+                    "shortage",
+                    "",
+                    "",
                     day,
+                    shift,
                     data.shifts[shift],
                     role,
-                    "",
-                    "",
-                    "",
+                    "unfilled",
                     shortage_count,
+                    f"Unfilled demand for {shortage_count} {role} slot(s)",
                 ]
             )
 

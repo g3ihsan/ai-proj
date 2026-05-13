@@ -1,0 +1,3 @@
+shift,shift_name,start_hour,end_hour
+0,morning,8,16
+1,evening,16,24

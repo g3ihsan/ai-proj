@@ -61,7 +61,9 @@ output. Global solver settings are intentionally outside the three CSV files:
 `min_rest_hours`, `max_consecutive_days`, `shortage_penalty`, `time_limit_sec`,
 `seed`, and `use_warm_start` are explicit adapter or CLI parameters. The CSV
 adapter builds the same JSON-safe solve request payload used by
-`solve_payload(...)`; CSV is not a separate solver contract.
+`solve_payload(...)`; CSV is not a separate solver contract. The roster CSV
+output uses one standard record shape for assignments and shortages:
+`record_type,employee_id,name,day,shift,shift_name,role,status,value,message`.
 Request contract failures use `SchemaValidationError` in the error envelope so
 future wrappers can distinguish malformed JSON payloads from solver infeasibility
 or normal validation violations.

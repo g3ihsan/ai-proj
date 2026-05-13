@@ -29,6 +29,8 @@ Run a three-file CSV solve:
 PYTHONPATH=. python -m workforce_scheduling.cli --employees-csv employees.csv --shifts-csv shifts.csv --demand-csv demand.csv --roster-csv roster.csv --min-rest-hours 8 --max-consecutive-days 5 --shortage-penalty 1000
 ```
 
+Example CSV inputs are checked in under `examples/csv/`.
+
 CSV contract:
 
 - `employees.csv`: `employee_id,name,roles,hourly_cost,max_weekly_hours,available_day0_shift0,...`
@@ -44,6 +46,16 @@ one explicit availability column for every day/shift combination in the demand
 and shift files, using the pattern
 `available_day{day_index}_shift{shift_index}`. Values may be `true`/`false`,
 `yes`/`no`, or `1`/`0`.
+
+Roster output CSV uses this header:
+
+```csv
+record_type,employee_id,name,day,shift,shift_name,role,status,value,message
+```
+
+Assignment rows use `record_type=assignment`, `status=assigned`, and
+`value=1`. Shortage rows use `record_type=shortage`, `status=unfilled`, and
+`value` equal to the unfilled count.
 
 Run the thin HTTP wrapper locally:
 

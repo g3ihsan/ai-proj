@@ -1,0 +1,4 @@
+employee_id,name,roles,hourly_cost,max_weekly_hours,available_day0_shift0,available_day0_shift1,available_day1_shift0,available_day1_shift1
+0,Asha,worker|supervisor,20,40,true,true,true,false
+1,Ravi,worker,15,40,true,true,true,true
+2,Meera,worker,18,40,true,false,true,true
