@@ -9,7 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from .csv_adapter import (
     DEFAULT_MAX_CONSECUTIVE_DAYS,
@@ -44,6 +44,7 @@ REQUEST_ID_HEADER = "X-Request-ID"
 MAX_JSON_REQUEST_BYTES = 1_000_000
 MAX_CSV_UPLOAD_BYTES = 1_000_000
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+EXAMPLES_CSV_DIR = Path(__file__).resolve().parent.parent / "examples" / "csv"
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Workforce Scheduling Solver")
 solve_job_store = InMemorySolveJobStore()
@@ -89,8 +90,8 @@ async def health() -> dict[str, bool | str]:
 
 
 @app.get("/viewer")
-async def viewer_index_without_slash() -> Response:
-    return _frontend_response("index.html", "text/html")
+async def viewer_index_without_slash() -> RedirectResponse:
+    return RedirectResponse(url="/viewer/", status_code=307)
 
 
 @app.get("/viewer/")
@@ -108,6 +109,21 @@ async def viewer_styles_css() -> Response:
     return _frontend_response("styles.css", "text/css")
 
 
+@app.get("/viewer/examples/employees.csv")
+async def viewer_example_employees_csv() -> Response:
+    return _example_csv_response("employees.csv")
+
+
+@app.get("/viewer/examples/shifts.csv")
+async def viewer_example_shifts_csv() -> Response:
+    return _example_csv_response("shifts.csv")
+
+
+@app.get("/viewer/examples/demand.csv")
+async def viewer_example_demand_csv() -> Response:
+    return _example_csv_response("demand.csv")
+
+
 @app.get("/metadata")
 async def metadata() -> dict[str, Any]:
     default_options = SolveOptions()
@@ -123,6 +139,11 @@ async def metadata() -> dict[str, Any]:
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
             "viewer": "GET /viewer/",
+            "viewer_example_employees_csv": (
+                "GET /viewer/examples/employees.csv"
+            ),
+            "viewer_example_shifts_csv": "GET /viewer/examples/shifts.csv",
+            "viewer_example_demand_csv": "GET /viewer/examples/demand.csv",
         },
         "csv_upload": {
             "file_fields": ["employees_csv", "shifts_csv", "demand_csv"],
@@ -391,3 +412,8 @@ def _log_solve_route(
 def _frontend_response(filename: str, media_type: str) -> Response:
     path = FRONTEND_DIR / filename
     return Response(content=path.read_text(), media_type=media_type)
+
+
+def _example_csv_response(filename: str) -> Response:
+    path = EXAMPLES_CSV_DIR / filename
+    return Response(content=path.read_text(), media_type="text/csv")

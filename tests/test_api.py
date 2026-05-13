@@ -128,6 +128,11 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
             "viewer": "GET /viewer/",
+            "viewer_example_employees_csv": (
+                "GET /viewer/examples/employees.csv"
+            ),
+            "viewer_example_shifts_csv": "GET /viewer/examples/shifts.csv",
+            "viewer_example_demand_csv": "GET /viewer/examples/demand.csv",
         },
         "csv_upload": {
             "file_fields": ["employees_csv", "shifts_csv", "demand_csv"],
@@ -180,6 +185,10 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
 
 
 def test_api_serves_static_roster_viewer() -> None:
+    redirect_response = _api_request("GET", "/viewer")
+    assert redirect_response.status_code == 307
+    assert redirect_response.headers["location"] == "/viewer/"
+
     response = _api_request("GET", "/viewer/")
 
     assert response.status_code == 200
@@ -188,9 +197,35 @@ def test_api_serves_static_roster_viewer() -> None:
     assert "Roster Viewer" in response.text
     assert "./app.js" in response.text
 
-    without_slash_response = _api_request("GET", "/viewer")
-    assert without_slash_response.status_code == 200
-    assert "Roster Viewer" in without_slash_response.text
+    app_js_response = _api_request("GET", "/viewer/app.js")
+    assert app_js_response.status_code == 200
+    assert app_js_response.headers["content-type"].startswith(
+        "application/javascript"
+    )
+    assert "loadDemoCsvs" in app_js_response.text
+
+    styles_response = _api_request("GET", "/viewer/styles.css")
+    assert styles_response.status_code == 200
+    assert styles_response.headers["content-type"].startswith("text/css")
+    assert ".helper-text" in styles_response.text
+
+
+def test_api_serves_viewer_example_csv_files() -> None:
+    expected_headers = {
+        "/viewer/examples/employees.csv": (
+            "employee_id,name,roles,hourly_cost,max_weekly_hours,"
+        ),
+        "/viewer/examples/shifts.csv": "shift,shift_name,start_hour,end_hour",
+        "/viewer/examples/demand.csv": "day,shift,role,required",
+    }
+
+    for path, expected_header in expected_headers.items():
+        response = _api_request("GET", path)
+
+        assert response.status_code == 200
+        assert response.headers["x-request-id"]
+        assert response.headers["content-type"].startswith("text/csv")
+        assert response.text.startswith(expected_header)
 
 
 def test_api_preserves_incoming_request_id() -> None:

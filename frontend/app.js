@@ -44,6 +44,7 @@ const sampleRequest = {
 const state = {
   activeTab: "assignments",
   csvText: "",
+  demoCsvFiles: {},
   rows: {
     assignments: [],
     shortages: [],
@@ -59,6 +60,8 @@ const elements = {
   metadataGrid: document.querySelector("#metadata-grid"),
   jsonRequest: document.querySelector("#json-request"),
   loadSampleJson: document.querySelector("#load-sample-json"),
+  loadDemoCsvs: document.querySelector("#load-demo-csvs"),
+  csvDemoStatus: document.querySelector("#csv-demo-status"),
   solveJson: document.querySelector("#solve-json"),
   solveCsv: document.querySelector("#solve-csv"),
   submitJob: document.querySelector("#submit-job"),
@@ -299,15 +302,15 @@ async function solveJson() {
 }
 
 async function solveCsv() {
-  const fileIds = ["employees-csv", "shifts-csv", "demand-csv"];
-  if (fileIds.some((id) => !document.querySelector(`#${id}`).files[0])) {
-    log("CSV solve requires employees.csv, shifts.csv, and demand.csv.");
+  const csvFiles = selectedCsvFiles();
+  if (!csvFiles.employees || !csvFiles.shifts || !csvFiles.demand) {
+    log("CSV solve requires uploaded files or loaded demo CSVs.");
     return;
   }
   const formData = new FormData();
-  formData.append("employees_csv", document.querySelector("#employees-csv").files[0]);
-  formData.append("shifts_csv", document.querySelector("#shifts-csv").files[0]);
-  formData.append("demand_csv", document.querySelector("#demand-csv").files[0]);
+  formData.append("employees_csv", csvFiles.employees);
+  formData.append("shifts_csv", csvFiles.shifts);
+  formData.append("demand_csv", csvFiles.demand);
   formData.append("min_rest_hours", document.querySelector("#min-rest-hours").value);
   formData.append("max_consecutive_days", document.querySelector("#max-consecutive-days").value);
   formData.append("shortage_penalty", document.querySelector("#shortage-penalty").value);
@@ -331,6 +334,43 @@ async function solveCsv() {
   } catch (error) {
     log(`CSV solve failed: ${error.message}`);
   }
+}
+
+function selectedCsvFiles() {
+  return {
+    employees:
+      document.querySelector("#employees-csv").files[0] || state.demoCsvFiles.employees,
+    shifts:
+      document.querySelector("#shifts-csv").files[0] || state.demoCsvFiles.shifts,
+    demand:
+      document.querySelector("#demand-csv").files[0] || state.demoCsvFiles.demand,
+  };
+}
+
+async function loadDemoCsvs() {
+  try {
+    state.demoCsvFiles = {
+      employees: await fetchDemoCsv("employees.csv"),
+      shifts: await fetchDemoCsv("shifts.csv"),
+      demand: await fetchDemoCsv("demand.csv"),
+    };
+    elements.csvDemoStatus.textContent =
+      "Demo CSVs loaded from /viewer/examples. Uploaded files still take precedence.";
+    log("Demo CSV files loaded.");
+  } catch (error) {
+    state.demoCsvFiles = {};
+    elements.csvDemoStatus.textContent = "Demo CSV load failed.";
+    log(`Demo CSV load failed: ${error.message}`);
+  }
+}
+
+async function fetchDemoCsv(filename) {
+  const response = await apiFetch(`/viewer/examples/${filename}`);
+  if (!response.ok) {
+    throw new Error(`${filename} returned ${response.status}`);
+  }
+  const text = await response.text();
+  return new File([text], filename, { type: "text/csv" });
 }
 
 async function submitJob() {
@@ -397,6 +437,7 @@ elements.loadSampleJson.addEventListener("click", () => {
   elements.jsonRequest.value = JSON.stringify(sampleRequest, null, 2);
   log("Sample JSON request loaded.");
 });
+elements.loadDemoCsvs.addEventListener("click", loadDemoCsvs);
 elements.solveJson.addEventListener("click", solveJson);
 elements.solveCsv.addEventListener("click", solveCsv);
 elements.submitJob.addEventListener("click", submitJob);

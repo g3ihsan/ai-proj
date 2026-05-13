@@ -68,6 +68,11 @@ p {
   margin: 6px 0 0;
 }
 
+.helper-text {
+  font-size: 13px;
+  margin-top: 10px;
+}
+
 .status-panel {
   align-items: center;
   background: var(--surface);

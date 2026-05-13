@@ -41,9 +41,11 @@ Request limits:
 - Each uploaded CSV file: `1,000,000` bytes
 - Solver time limit option: `0 < time_limit_sec <= 30`
 
-The optional static viewer is served by the same process at `/viewer/`. It calls
-the existing JSON, job, and CSV endpoints only; it has no persistence, auth, or
-separate scheduling behavior.
+The optional static viewer is served by the same process at `/viewer/`. Requests
+to `/viewer` redirect to `/viewer/` so relative asset paths resolve
+consistently. The viewer calls the existing JSON, job, and CSV endpoints only;
+it has no persistence, auth, or separate scheduling behavior. Checked-in demo
+CSV files are served read-only under `/viewer/examples/`.
 
 ## Endpoints
 
@@ -69,6 +71,15 @@ job limits, and request limits. This endpoint does not run the solver.
 
 Returns a static roster viewer for local API demonstration and manual CSV/JSON
 smoke testing. The viewer is not a separate solver boundary.
+
+Viewer support routes:
+
+- `GET /viewer` redirects to `/viewer/`
+- `GET /viewer/app.js`
+- `GET /viewer/styles.css`
+- `GET /viewer/examples/employees.csv`
+- `GET /viewer/examples/shifts.csv`
+- `GET /viewer/examples/demand.csv`
 
 ### `POST /solve`
 

@@ -46,8 +46,12 @@
         <section class="panel">
           <div class="panel-header">
             <h2>CSV Solve</h2>
-            <button type="button" class="primary-button" id="solve-csv">Upload & Solve</button>
+            <div class="button-row">
+              <button type="button" class="ghost-button" id="load-demo-csvs">Load Demo CSVs</button>
+              <button type="button" class="primary-button" id="solve-csv">Upload & Solve</button>
+            </div>
           </div>
+          <p class="helper-text" id="csv-demo-status">Upload the three CSV files or load the checked-in demo files.</p>
           <div class="file-grid">
             <label class="field">
               <span>employees.csv</span>
