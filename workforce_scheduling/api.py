@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 from .jobs import (
     InMemorySolveJobStore,
     JobNotFoundError,
+    JobStoreFullError,
+    MAX_RETAINED_JOBS,
     SOLVE_JOB_MAX_WORKERS,
     job_payload,
     submit_solve_job,
@@ -73,6 +75,7 @@ async def metadata() -> dict[str, Any]:
         "job_execution": {
             "backend": "in_memory_thread_pool",
             "max_workers": SOLVE_JOB_MAX_WORKERS,
+            "max_retained_jobs": MAX_RETAINED_JOBS,
         },
     }
 
@@ -99,7 +102,11 @@ async def create_solve_job(
         response_payload = error_payload(exc)
         return JSONResponse(content=response_payload, status_code=400)
 
-    job = solve_job_store.create()
+    try:
+        job = solve_job_store.create()
+    except JobStoreFullError as exc:
+        return JSONResponse(content=error_payload(exc), status_code=429)
+
     submit_solve_job(solve_job_store, job.job_id, request_payload)
     return JSONResponse(
         content={

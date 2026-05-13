@@ -16,6 +16,8 @@ JOB_RUNNING = "running"
 JOB_SUCCEEDED = "succeeded"
 JOB_FAILED = "failed"
 SOLVE_JOB_MAX_WORKERS = 2
+MAX_RETAINED_JOBS = 100
+JOB_TERMINAL_STATUSES = {JOB_SUCCEEDED, JOB_FAILED}
 solve_job_executor = ThreadPoolExecutor(
     max_workers=SOLVE_JOB_MAX_WORKERS,
     thread_name_prefix="solve-job",
@@ -23,6 +25,10 @@ solve_job_executor = ThreadPoolExecutor(
 
 
 class JobNotFoundError(Exception):
+    pass
+
+
+class JobStoreFullError(Exception):
     pass
 
 
@@ -53,6 +59,11 @@ class InMemorySolveJobStore:
             updated_at=now,
         )
         with self._lock:
+            self._prune_terminal_jobs_locked(MAX_RETAINED_JOBS - 1)
+            if len(self._jobs) >= MAX_RETAINED_JOBS:
+                raise JobStoreFullError(
+                    f"In-memory solve job store is full at {MAX_RETAINED_JOBS} jobs"
+                )
             self._jobs[job.job_id] = job
         return job
 
@@ -104,6 +115,10 @@ class InMemorySolveJobStore:
         with self._lock:
             self._jobs.clear()
 
+    def retained_count(self) -> int:
+        with self._lock:
+            return len(self._jobs)
+
     def _replace(self, job_id: str, **changes: Any) -> SolveJob:
         with self._lock:
             current = self._jobs.get(job_id)
@@ -122,6 +137,23 @@ class InMemorySolveJobStore:
             )
             self._jobs[job_id] = updated
         return updated
+
+    def _prune_terminal_jobs_locked(self, target_count: int) -> None:
+        if len(self._jobs) <= target_count:
+            return
+
+        terminal_jobs = sorted(
+            (
+                job
+                for job in self._jobs.values()
+                if job.status in JOB_TERMINAL_STATUSES
+            ),
+            key=lambda job: (job.finished_at or job.updated_at, job.created_at),
+        )
+        for job in terminal_jobs:
+            if len(self._jobs) <= target_count:
+                return
+            del self._jobs[job.job_id]
 
 
 def run_solve_job(

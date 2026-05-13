@@ -8,9 +8,17 @@ from pathlib import Path
 from typing import Dict
 
 import httpx
+import pytest
 
 from workforce_scheduling.api import app, solve_job_store
-from workforce_scheduling.jobs import SOLVE_JOB_MAX_WORKERS, solve_job_executor
+from workforce_scheduling.jobs import (
+    InMemorySolveJobStore,
+    JobNotFoundError,
+    JobStoreFullError,
+    MAX_RETAINED_JOBS,
+    SOLVE_JOB_MAX_WORKERS,
+    solve_job_executor,
+)
 
 
 def _api_request(
@@ -98,6 +106,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
         "job_execution": {
             "backend": "in_memory_thread_pool",
             "max_workers": 2,
+            "max_retained_jobs": 100,
         },
     }
 
@@ -105,6 +114,43 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
 def test_solve_job_executor_is_bounded() -> None:
     assert SOLVE_JOB_MAX_WORKERS == 2
     assert solve_job_executor._max_workers == SOLVE_JOB_MAX_WORKERS
+
+
+def test_solve_job_store_prunes_oldest_terminal_jobs_at_retention_limit() -> None:
+    store = InMemorySolveJobStore()
+    first_job = store.create()
+    store.mark_failed(first_job.job_id, {"type": "Error", "message": "first"})
+
+    retained_jobs = []
+    for index in range(MAX_RETAINED_JOBS - 1):
+        job = store.create()
+        store.mark_failed(
+            job.job_id,
+            {"type": "Error", "message": f"terminal-{index}"},
+        )
+        retained_jobs.append(job)
+
+    new_job = store.create()
+
+    assert store.retained_count() == MAX_RETAINED_JOBS
+    with pytest.raises(JobNotFoundError):
+        store.get(first_job.job_id)
+    assert store.get(retained_jobs[0].job_id).status == "failed"
+    assert store.get(new_job.job_id).status == "queued"
+
+
+def test_solve_job_store_rejects_new_job_when_retained_jobs_are_active() -> None:
+    store = InMemorySolveJobStore()
+    for _ in range(MAX_RETAINED_JOBS):
+        store.create()
+
+    with pytest.raises(JobStoreFullError) as exc_info:
+        store.create()
+
+    assert str(exc_info.value) == (
+        f"In-memory solve job store is full at {MAX_RETAINED_JOBS} jobs"
+    )
+    assert store.retained_count() == MAX_RETAINED_JOBS
 
 
 def test_api_solve_job_boundary_returns_submitted_job_and_result() -> None:
