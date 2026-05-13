@@ -29,6 +29,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -155,6 +156,7 @@ p {
 }
 
 input,
+select,
 textarea {
   background: #fbfcfe;
   border: 1px solid var(--line);
@@ -165,9 +167,15 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(23, 107, 135, 0.14);
+}
+
+.compact-field {
+  margin-top: 14px;
+  max-width: 220px;
 }
 
 textarea {

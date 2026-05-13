@@ -195,6 +195,7 @@ def test_api_serves_static_roster_viewer() -> None:
     assert response.headers["x-request-id"]
     assert response.headers["content-type"].startswith("text/html")
     assert "Roster Viewer" in response.text
+    assert 'id="response-mode"' in response.text
     assert "./app.js" in response.text
 
     app_js_response = _api_request("GET", "/viewer/app.js")
@@ -203,11 +204,14 @@ def test_api_serves_static_roster_viewer() -> None:
         "application/javascript"
     )
     assert "loadDemoCsvs" in app_js_response.text
+    assert "applySelectedResponseMode" in app_js_response.text
+    assert "responseError" in app_js_response.text
 
     styles_response = _api_request("GET", "/viewer/styles.css")
     assert styles_response.status_code == 200
     assert styles_response.headers["content-type"].startswith("text/css")
     assert ".helper-text" in styles_response.text
+    assert ".compact-field" in styles_response.text
 
 
 def test_api_serves_viewer_example_csv_files() -> None:

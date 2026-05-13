@@ -45,7 +45,9 @@ The optional static viewer is served by the same process at `/viewer/`. Requests
 to `/viewer` redirect to `/viewer/` so relative asset paths resolve
 consistently. The viewer calls the existing JSON, job, and CSV endpoints only;
 it has no persistence, auth, or separate scheduling behavior. Checked-in demo
-CSV files are served read-only under `/viewer/examples/`.
+CSV files are served read-only under `/viewer/examples/`. The viewer exposes a
+`compact`/`standard`/`debug` response mode selector for the canonical JSON solve
+request.
 
 ## Endpoints
 

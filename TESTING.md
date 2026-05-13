@@ -92,7 +92,9 @@ HTTP endpoints:
 roster viewer for the existing JSON, job, and CSV solve endpoints. It has no
 separate build step and does not change solver behavior. Demo CSV files are
 available at `/viewer/examples/employees.csv`, `/viewer/examples/shifts.csv`,
-and `/viewer/examples/demand.csv` for local viewer demos.
+and `/viewer/examples/demand.csv` for local viewer demos. The JSON solve panel
+includes a `compact`/`standard`/`debug` response mode selector that updates the
+canonical request `options.response_mode` before solving.
 
 `POST /solve-csv` accepts multipart fields `employees_csv`, `shifts_csv`, and
 `demand_csv`, plus the same CSV solve settings used by the CLI:

@@ -59,6 +59,7 @@ const elements = {
   serviceStatus: document.querySelector("#service-status"),
   metadataGrid: document.querySelector("#metadata-grid"),
   jsonRequest: document.querySelector("#json-request"),
+  responseMode: document.querySelector("#response-mode"),
   loadSampleJson: document.querySelector("#load-sample-json"),
   loadDemoCsvs: document.querySelector("#load-demo-csvs"),
   csvDemoStatus: document.querySelector("#csv-demo-status"),
@@ -86,6 +87,17 @@ function requestId() {
 function log(message, payload) {
   const suffix = payload ? `\n${JSON.stringify(payload, null, 2)}` : "";
   elements.messageLog.textContent = `${new Date().toLocaleTimeString()} ${message}${suffix}`;
+}
+
+function logError(prefix, error, context = {}) {
+  const payload = {
+    type: error.type || error.name || "Error",
+    message: error.message,
+    status: error.status || "",
+    request_id: error.request_id || "",
+    ...context,
+  };
+  log(prefix, payload);
 }
 
 function apiUrl(path) {
@@ -139,7 +151,7 @@ function renderTable() {
 }
 
 function setRowsFromSolveResult(result) {
-  const request = currentSolveRequest();
+  const request = currentSolveRequest({ fallbackToSample: true });
   const employeeNames = new Map(
     (request.problem?.employees || []).map((employee) => [
       employee.employee_id,
@@ -192,12 +204,36 @@ function setRowsFromSolveResult(result) {
   renderTable();
 }
 
-function currentSolveRequest() {
+function currentSolveRequest({
+  applySelectedResponseMode = false,
+  fallbackToSample = false,
+} = {}) {
   try {
-    return JSON.parse(elements.jsonRequest.value);
-  } catch (_error) {
-    return sampleRequest;
+    const request = JSON.parse(elements.jsonRequest.value);
+    if (applySelectedResponseMode) {
+      request.options = request.options || {};
+      request.options.response_mode = elements.responseMode.value;
+    }
+    return request;
+  } catch (error) {
+    if (fallbackToSample) {
+      return JSON.parse(JSON.stringify(sampleRequest));
+    }
+    throw error;
   }
+}
+
+function syncResponseModeFromRequest() {
+  const request = currentSolveRequest();
+  const mode = request.options?.response_mode;
+  if (["compact", "standard", "debug"].includes(mode)) {
+    elements.responseMode.value = mode;
+  }
+}
+
+function writeRequest(request) {
+  elements.jsonRequest.value = JSON.stringify(request, null, 2);
+  syncResponseModeFromRequest();
 }
 
 function setRowsFromCsv(csvText) {
@@ -278,26 +314,32 @@ async function checkApi() {
     log("Metadata loaded", payload.endpoints);
   } catch (error) {
     setServiceStatus(false, "API unavailable");
-    log(`API check failed: ${error.message}`);
+    logError("API check failed", error);
   }
 }
 
 async function solveJson() {
   try {
-    const payload = JSON.parse(elements.jsonRequest.value);
+    const payload = currentSolveRequest({ applySelectedResponseMode: true });
+    writeRequest(payload);
     const response = await apiFetch("/solve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     const envelope = await response.json();
-    if (!response.ok || !envelope.ok) throw new Error(envelope.error?.message || "Solve failed");
+    if (!response.ok || !envelope.ok) {
+      throw responseError(response, envelope);
+    }
     state.csvText = "";
     elements.downloadCsv.disabled = true;
     setRowsFromSolveResult(envelope.result);
-    log("JSON solve completed", envelope.result.metrics);
+    log("JSON solve completed", {
+      response_mode: payload.options.response_mode,
+      metrics: envelope.result.metrics,
+    });
   } catch (error) {
-    log(`JSON solve failed: ${error.message}`);
+    logError("JSON solve failed", error);
   }
 }
 
@@ -324,7 +366,7 @@ async function solveCsv() {
     if (!response.ok) {
       if (contentType.includes("application/json")) {
         const envelope = await response.json();
-        throw new Error(envelope.error?.message || "CSV solve failed");
+        throw responseError(response, envelope);
       }
       throw new Error("CSV solve failed");
     }
@@ -332,7 +374,7 @@ async function solveCsv() {
     setRowsFromCsv(csvText);
     log("CSV solve completed.");
   } catch (error) {
-    log(`CSV solve failed: ${error.message}`);
+    logError("CSV solve failed", error);
   }
 }
 
@@ -375,7 +417,8 @@ async function fetchDemoCsv(filename) {
 
 async function submitJob() {
   try {
-    const payload = JSON.parse(elements.jsonRequest.value);
+    const payload = currentSolveRequest({ applySelectedResponseMode: true });
+    writeRequest(payload);
     const submitResponse = await apiFetch("/solve-jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -383,12 +426,15 @@ async function submitJob() {
     });
     const submitEnvelope = await submitResponse.json();
     if (!submitResponse.ok || !submitEnvelope.ok) {
-      throw new Error(submitEnvelope.error?.message || "Job submission failed");
+      throw responseError(submitResponse, submitEnvelope);
     }
-    log("Job submitted", submitEnvelope.job);
+    log("Job submitted", {
+      response_mode: payload.options.response_mode,
+      job: submitEnvelope.job,
+    });
     await pollJob(submitEnvelope.status_url);
   } catch (error) {
-    log(`Job failed: ${error.message}`);
+    logError("Job failed", error);
   }
 }
 
@@ -408,6 +454,15 @@ async function pollJob(statusUrl) {
     }
   }
   log("Job is still running. Use the status URL from the API response to continue polling.");
+}
+
+function responseError(response, envelope) {
+  const apiError = envelope?.error || {};
+  const error = new Error(apiError.message || `Request failed with ${response.status}`);
+  error.type = apiError.type || "HttpError";
+  error.status = response.status;
+  error.request_id = apiError.request_id || response.headers.get("x-request-id") || "";
+  return error;
 }
 
 function downloadCsv() {
@@ -431,11 +486,16 @@ document.querySelectorAll(".tab").forEach((button) => {
 });
 
 elements.apiBase.value = defaultApiBase();
-elements.jsonRequest.value = JSON.stringify(sampleRequest, null, 2);
+writeRequest(sampleRequest);
 elements.checkApi.addEventListener("click", checkApi);
 elements.loadSampleJson.addEventListener("click", () => {
-  elements.jsonRequest.value = JSON.stringify(sampleRequest, null, 2);
+  writeRequest(sampleRequest);
   log("Sample JSON request loaded.");
+});
+elements.responseMode.addEventListener("change", () => {
+  const request = currentSolveRequest({ applySelectedResponseMode: true });
+  writeRequest(request);
+  log("Response mode updated", { response_mode: elements.responseMode.value });
 });
 elements.loadDemoCsvs.addEventListener("click", loadDemoCsvs);
 elements.solveJson.addEventListener("click", solveJson);

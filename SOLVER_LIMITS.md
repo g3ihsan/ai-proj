@@ -117,4 +117,6 @@ unbounded in-process backlog. Job payloads include
 queued jobs report `null` for fields that do not exist yet. The API does not add
 persistence, auth, websocket delivery, or any new solver behavior. The static
 viewer is a local API demonstration surface only and does not add persistent
-frontend state, storage, or alternate optimization behavior.
+frontend state, storage, or alternate optimization behavior. Its response mode
+selector changes only `options.response_mode` serialization and does not change
+optimization decisions.
