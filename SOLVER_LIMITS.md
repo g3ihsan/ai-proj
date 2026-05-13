@@ -57,7 +57,11 @@ Employee availability should be provided with explicit
 and edit the file without decoding a compact matrix.
 In `shifts.csv`, `shift` is a consecutive zero-based id used by demand rows and
 availability columns, while `shift_name` is the readable label shown in roster
-output.
+output. Global solver settings are intentionally outside the three CSV files:
+`min_rest_hours`, `max_consecutive_days`, `shortage_penalty`, `time_limit_sec`,
+`seed`, and `use_warm_start` are explicit adapter or CLI parameters. The CSV
+adapter builds the same JSON-safe solve request payload used by
+`solve_payload(...)`; CSV is not a separate solver contract.
 Request contract failures use `SchemaValidationError` in the error envelope so
 future wrappers can distinguish malformed JSON payloads from solver infeasibility
 or normal validation violations.

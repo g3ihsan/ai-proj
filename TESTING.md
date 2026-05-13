@@ -26,7 +26,7 @@ JSON solve options are bounded at the schema boundary: `0 < time_limit_sec <= 30
 Run a three-file CSV solve:
 
 ```bash
-PYTHONPATH=. python -m workforce_scheduling.cli --employees-csv employees.csv --shifts-csv shifts.csv --demand-csv demand.csv --roster-csv roster.csv
+PYTHONPATH=. python -m workforce_scheduling.cli --employees-csv employees.csv --shifts-csv shifts.csv --demand-csv demand.csv --roster-csv roster.csv --min-rest-hours 8 --max-consecutive-days 5 --shortage-penalty 1000
 ```
 
 CSV contract:
@@ -37,10 +37,13 @@ CSV contract:
 
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:
-`0`, `1`, `2`, and so on. Use `|` between multiple employee roles. Add one
-explicit availability column for every day/shift combination in the demand and
-shift files, using the pattern `available_day{day_index}_shift{shift_index}`.
-Values may be `true`/`false`, `yes`/`no`, or `1`/`0`.
+`0`, `1`, `2`, and so on. Global solver settings are not read from
+`shifts.csv`; pass `--min-rest-hours`, `--max-consecutive-days`, and
+`--shortage-penalty` explicitly. Use `|` between multiple employee roles. Add
+one explicit availability column for every day/shift combination in the demand
+and shift files, using the pattern
+`available_day{day_index}_shift{shift_index}`. Values may be `true`/`false`,
+`yes`/`no`, or `1`/`0`.
 
 Run the thin HTTP wrapper locally:
 

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 from .data import Employee, ProblemData, validate_problem_data
+from .schemas import solve_request_to_payload
 from .solve import Assignment
 
 
@@ -21,6 +22,10 @@ def problem_data_from_csv_files(
     employees_csv: str | Path,
     shifts_csv: str | Path,
     demand_csv: str | Path,
+    *,
+    min_rest_hours: int,
+    max_consecutive_days: int,
+    shortage_penalty: int,
 ) -> ProblemData:
     shift_records = _read_records(shifts_csv, "shifts")
     demand_records = _read_records(demand_csv, "demand")
@@ -47,7 +52,6 @@ def problem_data_from_csv_files(
     )
     _ensure_all_roles_present(demand, days, len(shifts), roles)
 
-    first_shift_record = shift_records[0]
     data = ProblemData(
         employees=employees,
         roles=roles,
@@ -55,21 +59,9 @@ def problem_data_from_csv_files(
         shifts=shifts,
         shift_start_hours=shift_start_hours,
         shift_end_hours=shift_end_hours,
-        min_rest_hours=_optional_int(
-            first_shift_record,
-            "min_rest_hours",
-            DEFAULT_MIN_REST_HOURS,
-        ),
-        max_consecutive_days=_optional_int(
-            first_shift_record,
-            "max_consecutive_days",
-            DEFAULT_MAX_CONSECUTIVE_DAYS,
-        ),
-        shortage_penalty=_optional_int(
-            first_shift_record,
-            "shortage_penalty",
-            DEFAULT_SHORTAGE_PENALTY,
-        ),
+        min_rest_hours=min_rest_hours,
+        max_consecutive_days=max_consecutive_days,
+        shortage_penalty=shortage_penalty,
         demand=demand,
         hint_assignments={},
     )
@@ -77,6 +69,34 @@ def problem_data_from_csv_files(
     if errors:
         raise CsvAdapterError("; ".join(errors))
     return data
+
+
+def payload_from_csv_files(
+    employees_csv: str | Path,
+    shifts_csv: str | Path,
+    demand_csv: str | Path,
+    *,
+    min_rest_hours: int,
+    max_consecutive_days: int,
+    shortage_penalty: int,
+    time_limit_sec: float,
+    seed: int,
+    use_warm_start: bool,
+) -> Dict[str, Any]:
+    data = problem_data_from_csv_files(
+        employees_csv,
+        shifts_csv,
+        demand_csv,
+        min_rest_hours=min_rest_hours,
+        max_consecutive_days=max_consecutive_days,
+        shortage_penalty=shortage_penalty,
+    )
+    return solve_request_to_payload(
+        data,
+        time_limit_sec=time_limit_sec,
+        seed=seed,
+        use_warm_start=use_warm_start,
+    )
 
 
 def write_roster_solution_csv(
@@ -433,17 +453,3 @@ def _required_int(
         raise CsvAdapterError(
             f"{file_label} row {row_number} {field} must be an integer"
         ) from exc
-
-
-def _optional_int(
-    record: Mapping[str, str],
-    field: str,
-    default: int,
-) -> int:
-    value = record.get(field)
-    if value is None or value.strip() == "":
-        return default
-    try:
-        return int(value)
-    except ValueError as exc:
-        raise CsvAdapterError(f"shifts {field} must be an integer") from exc
