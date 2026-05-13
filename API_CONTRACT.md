@@ -41,6 +41,10 @@ Request limits:
 - Each uploaded CSV file: `1,000,000` bytes
 - Solver time limit option: `0 < time_limit_sec <= 30`
 
+The optional static viewer is served by the same process at `/viewer/`. It calls
+the existing JSON, job, and CSV endpoints only; it has no persistence, auth, or
+separate scheduling behavior.
+
 ## Endpoints
 
 ### `GET /health`
@@ -60,6 +64,11 @@ Success:
 
 Returns the live service contract metadata, including endpoints, solve options,
 job limits, and request limits. This endpoint does not run the solver.
+
+### `GET /viewer/`
+
+Returns a static roster viewer for local API demonstration and manual CSV/JSON
+smoke testing. The viewer is not a separate solver boundary.
 
 ### `POST /solve`
 

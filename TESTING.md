@@ -82,10 +82,15 @@ HTTP endpoints:
 
 - `GET /health`
 - `GET /metadata`
+- `GET /viewer/`
 - `POST /solve`
 - `POST /solve-csv`
 - `POST /solve-jobs`
 - `GET /solve-jobs/{job_id}`
+
+`GET /viewer/` serves a static roster viewer for the existing JSON, job, and
+CSV solve endpoints. It has no separate build step and does not change solver
+behavior.
 
 `POST /solve-csv` accepts multipart fields `employees_csv`, `shifts_csv`, and
 `demand_csv`, plus the same CSV solve settings used by the CLI:

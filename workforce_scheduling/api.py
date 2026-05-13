@@ -43,6 +43,7 @@ from .schemas import (
 REQUEST_ID_HEADER = "X-Request-ID"
 MAX_JSON_REQUEST_BYTES = 1_000_000
 MAX_CSV_UPLOAD_BYTES = 1_000_000
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Workforce Scheduling Solver")
 solve_job_store = InMemorySolveJobStore()
@@ -87,6 +88,26 @@ async def health() -> dict[str, bool | str]:
     return {"ok": True, "service": "workforce_scheduling_solver"}
 
 
+@app.get("/viewer")
+async def viewer_index_without_slash() -> Response:
+    return _frontend_response("index.html", "text/html")
+
+
+@app.get("/viewer/")
+async def viewer_index() -> Response:
+    return _frontend_response("index.html", "text/html")
+
+
+@app.get("/viewer/app.js")
+async def viewer_app_js() -> Response:
+    return _frontend_response("app.js", "application/javascript")
+
+
+@app.get("/viewer/styles.css")
+async def viewer_styles_css() -> Response:
+    return _frontend_response("styles.css", "text/css")
+
+
 @app.get("/metadata")
 async def metadata() -> dict[str, Any]:
     default_options = SolveOptions()
@@ -101,6 +122,7 @@ async def metadata() -> dict[str, Any]:
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
+            "viewer": "GET /viewer/",
         },
         "csv_upload": {
             "file_fields": ["employees_csv", "shifts_csv", "demand_csv"],
@@ -364,3 +386,8 @@ def _log_solve_route(
         ok,
         error_type,
     )
+
+
+def _frontend_response(filename: str, media_type: str) -> Response:
+    path = FRONTEND_DIR / filename
+    return Response(content=path.read_text(), media_type=media_type)

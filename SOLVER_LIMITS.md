@@ -91,7 +91,8 @@ mode changes serialization only; it does not change solver decisions.
 
 `workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
 It exposes `GET /health`, `GET /metadata`, `POST /solve`, `POST /solve-csv`,
-`POST /solve-jobs`, and `GET /solve-jobs/{job_id}`. The synchronous solve
+`POST /solve-jobs`, `GET /solve-jobs/{job_id}`, and the static `GET /viewer/`
+roster viewer. The synchronous solve
 endpoint preserves the existing success/error envelope. The CSV upload endpoint
 is a thin multipart wrapper around the same three-file CSV adapter and returns
 the standard roster CSV as `text/csv`. Every HTTP response includes
@@ -113,4 +114,6 @@ are rejected instead of evicting queued or running work. It also allows at most
 unbounded in-process backlog. Job payloads include
 `created_at`, `updated_at`, `started_at`, `finished_at`, and `duration_sec`;
 queued jobs report `null` for fields that do not exist yet. The API does not add
-persistence, auth, websocket delivery, or any new solver behavior.
+persistence, auth, websocket delivery, or any new solver behavior. The static
+viewer is a local API demonstration surface only and does not add frontend state,
+storage, or alternate optimization behavior.

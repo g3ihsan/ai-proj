@@ -127,6 +127,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
+            "viewer": "GET /viewer/",
         },
         "csv_upload": {
             "file_fields": ["employees_csv", "shifts_csv", "demand_csv"],
@@ -176,6 +177,20 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
         },
     }
     assert response.headers["x-request-id"]
+
+
+def test_api_serves_static_roster_viewer() -> None:
+    response = _api_request("GET", "/viewer/")
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"]
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Roster Viewer" in response.text
+    assert "./app.js" in response.text
+
+    without_slash_response = _api_request("GET", "/viewer")
+    assert without_slash_response.status_code == 200
+    assert "Roster Viewer" in without_slash_response.text
 
 
 def test_api_preserves_incoming_request_id() -> None:
