@@ -259,6 +259,12 @@ function setIssue(error, status = "error") {
   activateTab("issues");
 }
 
+function invalidJsonError(error) {
+  const invalidJson = new Error(`Invalid JSON: ${error.message}`);
+  invalidJson.type = "InvalidJson";
+  return invalidJson;
+}
+
 function currentSolveRequest({
   applySelectedResponseMode = false,
   fallbackToSample = false,
@@ -591,9 +597,15 @@ elements.loadSampleJson.addEventListener("click", () => {
   log("Sample JSON request loaded.");
 });
 elements.responseMode.addEventListener("change", () => {
-  const request = currentSolveRequest({ applySelectedResponseMode: true });
-  writeRequest(request);
-  log("Response mode updated", { response_mode: elements.responseMode.value });
+  try {
+    const request = currentSolveRequest({ applySelectedResponseMode: true });
+    writeRequest(request);
+    log("Response mode updated", { response_mode: elements.responseMode.value });
+  } catch (error) {
+    const issue = invalidJsonError(error);
+    setIssue(issue);
+    logError("Response mode update failed", issue);
+  }
 });
 elements.loadDemoCsvs.addEventListener("click", loadDemoCsvs);
 elements.solveJson.addEventListener("click", solveJson);

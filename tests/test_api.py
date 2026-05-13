@@ -211,6 +211,9 @@ def test_api_serves_static_roster_viewer() -> None:
     assert "Solving JSON..." in app_js_response.text
     assert "Polling job..." in app_js_response.text
     assert "activateTab(\"issues\")" in app_js_response.text
+    assert "invalidJsonError" in app_js_response.text
+    assert "Invalid JSON:" in app_js_response.text
+    assert "Response mode update failed" in app_js_response.text
 
     styles_response = _api_request("GET", "/viewer/styles.css")
     assert styles_response.status_code == 200

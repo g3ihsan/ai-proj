@@ -97,6 +97,9 @@ includes a `compact`/`standard`/`debug` response mode selector that updates the
 canonical request `options.response_mode` before solving. The viewer disables
 action buttons while checks, solves, uploads, or job polling are running, and
 uses the Issues tab for API errors, validation rows, and missing-input messages.
+If the JSON editor contains malformed JSON, changing response mode leaves the
+editor unchanged and reports an `InvalidJson` issue instead of falling back to
+sample data.
 
 `POST /solve-csv` accepts multipart fields `employees_csv`, `shifts_csv`, and
 `demand_csv`, plus the same CSV solve settings used by the CLI:

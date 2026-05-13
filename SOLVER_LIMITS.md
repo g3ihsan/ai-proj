@@ -120,4 +120,5 @@ viewer is a local API demonstration surface only and does not add persistent
 frontend state, storage, or alternate optimization behavior. Its response mode
 selector changes only `options.response_mode` serialization and does not change
 optimization decisions. Busy states and the Issues tab are viewer-only
-presentation behavior.
+presentation behavior. Viewer-side malformed JSON handling is also presentation
+only: it reports an `InvalidJson` issue and does not call the solver.
