@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.responses import JSONResponse, Response
 
+from .csv_adapter import (
+    DEFAULT_MAX_CONSECUTIVE_DAYS,
+    DEFAULT_MIN_REST_HOURS,
+    DEFAULT_SHORTAGE_PENALTY,
+    payload_from_csv_files,
+    write_solve_response_csv,
+)
 from .jobs import (
     InMemorySolveJobStore,
     JobCapacityError,
@@ -22,6 +31,7 @@ from .schemas import (
     SCHEMA_VERSION,
     SolveOptions,
     error_payload,
+    parse_solve_request,
     solve_payload,
 )
 
@@ -46,8 +56,13 @@ async def metadata() -> dict[str, Any]:
             "health": "GET /health",
             "metadata": "GET /metadata",
             "solve": "POST /solve",
+            "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
+        },
+        "csv_upload": {
+            "file_fields": ["employees_csv", "shifts_csv", "demand_csv"],
+            "response_media_type": "text/csv",
         },
         "solve_options": {
             "time_limit_sec": {
@@ -95,6 +110,69 @@ async def solve_endpoint(request: Request) -> JSONResponse:
     return JSONResponse(content=response_payload, status_code=status_code)
 
 
+@app.post("/solve-csv", response_model=None)
+async def solve_csv_endpoint(
+    employees_csv: UploadFile = File(...),
+    shifts_csv: UploadFile = File(...),
+    demand_csv: UploadFile = File(...),
+    min_rest_hours: int = Form(DEFAULT_MIN_REST_HOURS),
+    max_consecutive_days: int = Form(DEFAULT_MAX_CONSECUTIVE_DAYS),
+    shortage_penalty: int = Form(DEFAULT_SHORTAGE_PENALTY),
+    time_limit_sec: float = Form(10.0),
+    seed: int = Form(1),
+    use_warm_start: bool = Form(False),
+):
+    try:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            employees_path = temp_path / "employees.csv"
+            shifts_path = temp_path / "shifts.csv"
+            demand_path = temp_path / "demand.csv"
+            output_path = temp_path / "roster.csv"
+
+            await _write_upload_file(employees_csv, employees_path)
+            await _write_upload_file(shifts_csv, shifts_path)
+            await _write_upload_file(demand_csv, demand_path)
+
+            request_payload = payload_from_csv_files(
+                employees_path,
+                shifts_path,
+                demand_path,
+                min_rest_hours=min_rest_hours,
+                max_consecutive_days=max_consecutive_days,
+                shortage_penalty=shortage_penalty,
+                time_limit_sec=time_limit_sec,
+                seed=seed,
+                use_warm_start=use_warm_start,
+            )
+            data = parse_solve_request(request_payload).problem
+            response_payload = solve_payload(request_payload)
+            if not response_payload["ok"]:
+                return JSONResponse(content=response_payload, status_code=400)
+
+            write_solve_response_csv(
+                response_payload,
+                output_path,
+                employee_names={
+                    employee.employee_id: employee.name
+                    for employee in data.employees
+                },
+                shift_names={
+                    shift: shift_name
+                    for shift, shift_name in enumerate(data.shifts)
+                },
+            )
+            return Response(
+                content=output_path.read_text(),
+                media_type="text/csv",
+                headers={
+                    "Content-Disposition": 'attachment; filename="roster.csv"'
+                },
+            )
+    except Exception as exc:
+        return JSONResponse(content=error_payload(exc), status_code=400)
+
+
 @app.post("/solve-jobs")
 async def create_solve_job(
     request: Request,
@@ -129,3 +207,7 @@ async def get_solve_job(job_id: str) -> JSONResponse:
         return JSONResponse(content=error_payload(exc), status_code=404)
 
     return JSONResponse(content={"ok": True, "job": job_payload(job)})
+
+
+async def _write_upload_file(upload: UploadFile, path: Path) -> None:
+    path.write_bytes(await upload.read())

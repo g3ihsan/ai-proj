@@ -90,9 +90,11 @@ metrics, assignments, shortages, violations, and objective breakdown. Response
 mode changes serialization only; it does not change solver decisions.
 
 `workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
-It exposes `GET /health`, `GET /metadata`, `POST /solve`, `POST /solve-jobs`,
-and `GET /solve-jobs/{job_id}`. The synchronous solve endpoint preserves the
-existing success/error envelope. The job endpoints are an in-process,
+It exposes `GET /health`, `GET /metadata`, `POST /solve`, `POST /solve-csv`,
+`POST /solve-jobs`, and `GET /solve-jobs/{job_id}`. The synchronous solve
+endpoint preserves the existing success/error envelope. The CSV upload endpoint
+is a thin multipart wrapper around the same three-file CSV adapter and returns
+the standard roster CSV as `text/csv`. The job endpoints are an in-process,
 in-memory prototype for the future async contract only; jobs disappear when the
 process restarts and are not a durable queue. Submitted jobs run in the current
 process through a bounded `ThreadPoolExecutor(max_workers=2)`, not a production

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import time
 from datetime import datetime, timezone
@@ -29,6 +31,8 @@ def _api_request(
     json_payload: object | None = None,
     content: str | None = None,
     headers: Dict[str, str] | None = None,
+    data: object | None = None,
+    files: object | None = None,
 ) -> httpx.Response:
     async def _request() -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
@@ -42,6 +46,8 @@ def _api_request(
                 json=json_payload,
                 content=content,
                 headers=headers,
+                data=data,
+                files=files,
             )
 
     return asyncio.run(_request())
@@ -64,6 +70,42 @@ def _assert_utc_iso_timestamp(value: str) -> datetime:
     return parsed
 
 
+def _csv_upload_files() -> Dict[str, tuple[str, str, str]]:
+    employees_csv = "\n".join(
+        [
+            (
+                "employee_id,name,roles,hourly_cost,max_weekly_hours,"
+                "available_day0_shift0,available_day0_shift1,"
+                "available_day1_shift0,available_day1_shift1"
+            ),
+            "0,Asha,worker|supervisor,20,40,true,true,true,false",
+            "1,Ravi,worker,15,40,true,true,true,true",
+            "2,Meera,worker,18,40,true,false,true,true",
+        ]
+    ) + "\n"
+    shifts_csv = "\n".join(
+        [
+            "shift,shift_name,start_hour,end_hour",
+            "0,morning,8,16",
+            "1,evening,16,24",
+        ]
+    ) + "\n"
+    demand_csv = "\n".join(
+        [
+            "day,shift,role,required",
+            "0,0,worker,1",
+            "0,1,supervisor,1",
+            "1,0,worker,1",
+            "1,1,worker,1",
+        ]
+    ) + "\n"
+    return {
+        "employees_csv": ("employees.csv", employees_csv, "text/csv"),
+        "shifts_csv": ("shifts.csv", shifts_csv, "text/csv"),
+        "demand_csv": ("demand.csv", demand_csv, "text/csv"),
+    }
+
+
 def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
     response = _api_request("GET", "/metadata")
 
@@ -76,8 +118,13 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "health": "GET /health",
             "metadata": "GET /metadata",
             "solve": "POST /solve",
+            "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
+        },
+        "csv_upload": {
+            "file_fields": ["employees_csv", "shifts_csv", "demand_csv"],
+            "response_media_type": "text/csv",
         },
         "solve_options": {
             "time_limit_sec": {
@@ -196,6 +243,76 @@ def test_api_solve_job_boundary_returns_429_when_active_capacity_is_full() -> No
         }
     finally:
         solve_job_store.clear()
+
+
+def test_api_solve_csv_endpoint_returns_roster_csv() -> None:
+    response = _api_request(
+        "POST",
+        "/solve-csv",
+        data={
+            "min_rest_hours": "8",
+            "max_consecutive_days": "5",
+            "shortage_penalty": "1000",
+            "time_limit_sec": "5",
+            "seed": "1",
+            "use_warm_start": "false",
+        },
+        files=_csv_upload_files(),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="roster.csv"'
+    )
+    rows = list(csv.DictReader(io.StringIO(response.text)))
+
+    assert rows[0]["record_type"] == "metric"
+    assert rows[0]["status"] == "status"
+    assert rows[0]["value"] == "OPTIMAL"
+    assert len([row for row in rows if row["record_type"] == "assignment"]) == 4
+    assert len([row for row in rows if row["record_type"] == "shortage"]) == 8
+    assert {
+        row["name"]
+        for row in rows
+        if row["record_type"] == "assignment"
+    } <= {"Asha", "Ravi", "Meera"}
+    assert {
+        row["shift_name"]
+        for row in rows
+        if row["record_type"] == "assignment"
+    } <= {"morning", "evening"}
+
+
+def test_api_solve_csv_endpoint_returns_error_envelope_for_invalid_csv() -> None:
+    files = _csv_upload_files()
+    files["shifts_csv"] = (
+        "shifts.csv",
+        "shift,shift_name,start_hour,end_hour\n0,morning,8,16\n1,,16,24\n",
+        "text/csv",
+    )
+
+    response = _api_request(
+        "POST",
+        "/solve-csv",
+        data={
+            "min_rest_hours": "8",
+            "max_consecutive_days": "5",
+            "shortage_penalty": "1000",
+            "time_limit_sec": "5",
+            "seed": "1",
+        },
+        files=files,
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "ok": False,
+        "error": {
+            "type": "CsvAdapterError",
+            "message": "shifts row 3 missing shift_name",
+        },
+    }
 
 
 def test_api_solve_job_boundary_returns_submitted_job_and_result() -> None:

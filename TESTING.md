@@ -83,8 +83,14 @@ HTTP endpoints:
 - `GET /health`
 - `GET /metadata`
 - `POST /solve`
+- `POST /solve-csv`
 - `POST /solve-jobs`
 - `GET /solve-jobs/{job_id}`
+
+`POST /solve-csv` accepts multipart fields `employees_csv`, `shifts_csv`, and
+`demand_csv`, plus the same CSV solve settings used by the CLI:
+`min_rest_hours`, `max_consecutive_days`, `shortage_penalty`, `time_limit_sec`,
+`seed`, and `use_warm_start`. It returns the standard roster CSV as `text/csv`.
 
 Run benchmark fixtures:
 
