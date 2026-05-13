@@ -13,8 +13,9 @@ import pytest
 from workforce_scheduling.api import app, solve_job_store
 from workforce_scheduling.jobs import (
     InMemorySolveJobStore,
+    JobCapacityError,
     JobNotFoundError,
-    JobStoreFullError,
+    MAX_ACTIVE_JOBS,
     MAX_RETAINED_JOBS,
     SOLVE_JOB_MAX_WORKERS,
     solve_job_executor,
@@ -106,6 +107,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
         "job_execution": {
             "backend": "in_memory_thread_pool",
             "max_workers": 2,
+            "max_active_jobs": 10,
             "max_retained_jobs": 100,
         },
     }
@@ -139,18 +141,61 @@ def test_solve_job_store_prunes_oldest_terminal_jobs_at_retention_limit() -> Non
     assert store.get(new_job.job_id).status == "queued"
 
 
-def test_solve_job_store_rejects_new_job_when_retained_jobs_are_active() -> None:
+def test_solve_job_store_rejects_new_job_when_active_capacity_is_full() -> None:
     store = InMemorySolveJobStore()
-    for _ in range(MAX_RETAINED_JOBS):
-        store.create()
+    for index in range(MAX_ACTIVE_JOBS):
+        job = store.create()
+        if index % 2 == 0:
+            store.mark_running(job.job_id)
 
-    with pytest.raises(JobStoreFullError) as exc_info:
+    with pytest.raises(JobCapacityError) as exc_info:
         store.create()
 
     assert str(exc_info.value) == (
-        f"In-memory solve job store is full at {MAX_RETAINED_JOBS} jobs"
+        f"In-memory solve job capacity is full at {MAX_ACTIVE_JOBS} active jobs"
     )
-    assert store.retained_count() == MAX_RETAINED_JOBS
+    assert store.active_count() == MAX_ACTIVE_JOBS
+    assert store.retained_count() == MAX_ACTIVE_JOBS
+
+
+def test_solve_job_store_terminal_jobs_do_not_count_against_active_capacity() -> None:
+    store = InMemorySolveJobStore()
+    for index in range(MAX_ACTIVE_JOBS):
+        job = store.create()
+        store.mark_failed(job.job_id, {"type": "Error", "message": str(index)})
+
+    for _ in range(MAX_ACTIVE_JOBS):
+        store.create()
+
+    assert store.active_count() == MAX_ACTIVE_JOBS
+    assert store.retained_count() == MAX_ACTIVE_JOBS * 2
+
+
+def test_api_solve_job_boundary_returns_429_when_active_capacity_is_full() -> None:
+    solve_job_store.clear()
+    try:
+        for _ in range(MAX_ACTIVE_JOBS):
+            solve_job_store.create()
+
+        response = _api_request(
+            "POST",
+            "/solve-jobs",
+            json_payload={"options": {"seed": 1}},
+        )
+
+        assert response.status_code == 429
+        assert response.json() == {
+            "ok": False,
+            "error": {
+                "type": "JobCapacityError",
+                "message": (
+                    f"In-memory solve job capacity is full at {MAX_ACTIVE_JOBS} "
+                    "active jobs"
+                ),
+            },
+        }
+    finally:
+        solve_job_store.clear()
 
 
 def test_api_solve_job_boundary_returns_submitted_job_and_result() -> None:

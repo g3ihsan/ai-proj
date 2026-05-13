@@ -16,7 +16,9 @@ JOB_RUNNING = "running"
 JOB_SUCCEEDED = "succeeded"
 JOB_FAILED = "failed"
 SOLVE_JOB_MAX_WORKERS = 2
+MAX_ACTIVE_JOBS = 10
 MAX_RETAINED_JOBS = 100
+JOB_ACTIVE_STATUSES = {JOB_QUEUED, JOB_RUNNING}
 JOB_TERMINAL_STATUSES = {JOB_SUCCEEDED, JOB_FAILED}
 solve_job_executor = ThreadPoolExecutor(
     max_workers=SOLVE_JOB_MAX_WORKERS,
@@ -29,6 +31,10 @@ class JobNotFoundError(Exception):
 
 
 class JobStoreFullError(Exception):
+    pass
+
+
+class JobCapacityError(Exception):
     pass
 
 
@@ -59,6 +65,10 @@ class InMemorySolveJobStore:
             updated_at=now,
         )
         with self._lock:
+            if self._active_count_locked() >= MAX_ACTIVE_JOBS:
+                raise JobCapacityError(
+                    f"In-memory solve job capacity is full at {MAX_ACTIVE_JOBS} active jobs"
+                )
             self._prune_terminal_jobs_locked(MAX_RETAINED_JOBS - 1)
             if len(self._jobs) >= MAX_RETAINED_JOBS:
                 raise JobStoreFullError(
@@ -119,6 +129,10 @@ class InMemorySolveJobStore:
         with self._lock:
             return len(self._jobs)
 
+    def active_count(self) -> int:
+        with self._lock:
+            return self._active_count_locked()
+
     def _replace(self, job_id: str, **changes: Any) -> SolveJob:
         with self._lock:
             current = self._jobs.get(job_id)
@@ -137,6 +151,13 @@ class InMemorySolveJobStore:
             )
             self._jobs[job_id] = updated
         return updated
+
+    def _active_count_locked(self) -> int:
+        return sum(
+            1
+            for job in self._jobs.values()
+            if job.status in JOB_ACTIVE_STATUSES
+        )
 
     def _prune_terminal_jobs_locked(self, target_count: int) -> None:
         if len(self._jobs) <= target_count:

@@ -98,8 +98,9 @@ process restarts and are not a durable queue. Submitted jobs run in the current
 process through a bounded `ThreadPoolExecutor(max_workers=2)`, not a production
 worker system. The in-memory store retains at most 100 job records. When full,
 it prunes oldest terminal jobs first; if all retained jobs are still active, new
-job submissions are rejected instead of evicting queued or running work. Job
-payloads include `created_at`, `updated_at`, `started_at`, `finished_at`, and
-`duration_sec`; queued jobs report `null` for fields that do not exist yet. The
-API does not add persistence, auth, websocket delivery, or any new solver
-behavior.
+job submissions are rejected instead of evicting queued or running work. It also
+allows at most 10 active jobs across queued and running states, so API callers
+cannot create an unbounded in-process backlog. Job payloads include
+`created_at`, `updated_at`, `started_at`, `finished_at`, and `duration_sec`;
+queued jobs report `null` for fields that do not exist yet. The API does not add
+persistence, auth, websocket delivery, or any new solver behavior.

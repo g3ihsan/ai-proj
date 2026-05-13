@@ -7,8 +7,10 @@ from fastapi.responses import JSONResponse
 
 from .jobs import (
     InMemorySolveJobStore,
+    JobCapacityError,
     JobNotFoundError,
     JobStoreFullError,
+    MAX_ACTIVE_JOBS,
     MAX_RETAINED_JOBS,
     SOLVE_JOB_MAX_WORKERS,
     job_payload,
@@ -75,6 +77,7 @@ async def metadata() -> dict[str, Any]:
         "job_execution": {
             "backend": "in_memory_thread_pool",
             "max_workers": SOLVE_JOB_MAX_WORKERS,
+            "max_active_jobs": MAX_ACTIVE_JOBS,
             "max_retained_jobs": MAX_RETAINED_JOBS,
         },
     }
@@ -104,7 +107,7 @@ async def create_solve_job(
 
     try:
         job = solve_job_store.create()
-    except JobStoreFullError as exc:
+    except (JobCapacityError, JobStoreFullError) as exc:
         return JSONResponse(content=error_payload(exc), status_code=429)
 
     submit_solve_job(solve_job_store, job.job_id, request_payload)
