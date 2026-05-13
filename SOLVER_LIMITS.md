@@ -55,6 +55,9 @@ boundary is a file adapter only: it converts `employees.csv`, `shifts.csv`, and
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.
+In `shifts.csv`, `shift` is a consecutive zero-based id used by demand rows and
+availability columns, while `shift_name` is the readable label shown in roster
+output.
 Request contract failures use `SchemaValidationError` in the error envelope so
 future wrappers can distinguish malformed JSON payloads from solver infeasibility
 or normal validation violations.

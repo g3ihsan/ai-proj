@@ -37,9 +37,9 @@ def _write_csv_fixture(directory: Path) -> tuple[Path, Path, Path]:
     shifts_csv.write_text(
         "\n".join(
             [
-                "shift,start_hour,end_hour,min_rest_hours,max_consecutive_days,shortage_penalty",
-                "morning,8,16,8,5,1000",
-                "evening,16,24,8,5,1000",
+                "shift,shift_name,start_hour,end_hour,min_rest_hours,max_consecutive_days,shortage_penalty",
+                "0,morning,8,16,8,5,1000",
+                "1,evening,16,24,8,5,1000",
             ]
         )
         + "\n"
@@ -48,10 +48,10 @@ def _write_csv_fixture(directory: Path) -> tuple[Path, Path, Path]:
         "\n".join(
             [
                 "day,shift,role,required",
-                "0,morning,worker,1",
-                "0,evening,supervisor,1",
-                "1,morning,worker,1",
-                "1,evening,worker,1",
+                "0,0,worker,1",
+                "0,1,supervisor,1",
+                "1,0,worker,1",
+                "1,1,worker,1",
             ]
         )
         + "\n"
@@ -70,12 +70,15 @@ def test_csv_adapter_builds_problem_data_and_writes_roster(tmp_path: Path) -> No
     assert data.roles == ["worker", "supervisor"]
     assert data.days == [0, 1]
     assert data.shifts == ["morning", "evening"]
+    assert data.shift_start_hours == [8, 16]
+    assert data.shift_end_hours == [16, 24]
     assert data.employees[0].availability == [[True, True], [True, False]]
     assert result.metrics.status == "OPTIMAL"
     assert result.objective_breakdown.total_shortage == 0
 
     rows = list(csv.DictReader(roster_csv.open()))
     assert len(rows) == 4
+    assert {row["shift"] for row in rows} <= {"morning", "evening"}
     assert {row["employee_name"] for row in rows} <= {"Asha", "Ravi", "Meera"}
     assert all(row["shortage_count"] == "0" for row in rows)
 
@@ -140,5 +143,26 @@ def test_csv_adapter_rejects_missing_explicit_availability_column(
         problem_data_from_csv_files(employees_csv, shifts_csv, demand_csv)
     except CsvAdapterError as exc:
         assert "missing available_day1_shift1" in str(exc)
+    else:
+        raise AssertionError("Expected CsvAdapterError")
+
+
+def test_csv_adapter_rejects_non_consecutive_shift_ids(tmp_path: Path) -> None:
+    employees_csv, shifts_csv, demand_csv = _write_csv_fixture(tmp_path)
+    shifts_csv.write_text(
+        "\n".join(
+            [
+                "shift,shift_name,start_hour,end_hour",
+                "0,morning,8,16",
+                "2,evening,16,24",
+            ]
+        )
+        + "\n"
+    )
+
+    try:
+        problem_data_from_csv_files(employees_csv, shifts_csv, demand_csv)
+    except CsvAdapterError as exc:
+        assert "consecutive zero-based" in str(exc)
     else:
         raise AssertionError("Expected CsvAdapterError")

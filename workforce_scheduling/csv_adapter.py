@@ -149,18 +149,50 @@ def _read_records(path: str | Path, label: str) -> List[Mapping[str, str]]:
 def _parse_shifts(
     records: List[Mapping[str, str]],
 ) -> Tuple[List[str], List[int], List[int]]:
-    shifts: List[str] = []
-    starts: List[int] = []
-    ends: List[int] = []
-    seen: set[str] = set()
+    parsed: List[Tuple[int, str, int, int]] = []
+    seen_ids: set[int] = set()
+    seen_names: set[str] = set()
+    explicit_shift_names = any(_has_value(record, "shift_name") for record in records)
     for row_number, record in enumerate(records, start=2):
-        shift = _required(record, "shift", "shifts", row_number)
-        if shift in seen:
-            raise CsvAdapterError(f"Duplicate shift {shift}")
-        seen.add(shift)
-        shifts.append(shift)
-        starts.append(_required_int(record, "start_hour", "shifts", row_number))
-        ends.append(_required_int(record, "end_hour", "shifts", row_number))
+        if explicit_shift_names:
+            shift_id = _required_int(record, "shift", "shifts", row_number)
+        else:
+            shift_id = len(parsed)
+        if shift_id < 0:
+            raise CsvAdapterError(f"shifts row {row_number} shift must be non-negative")
+        if shift_id in seen_ids:
+            raise CsvAdapterError(f"Duplicate shift {shift_id}")
+        seen_ids.add(shift_id)
+
+        shift_name = (
+            _shift_name(record, row_number)
+            if explicit_shift_names
+            else _required(record, "shift", "shifts", row_number)
+        )
+        if shift_name in seen_names:
+            raise CsvAdapterError(f"Duplicate shift_name {shift_name}")
+        seen_names.add(shift_name)
+
+        parsed.append(
+            (
+                shift_id,
+                shift_name,
+                _required_int(record, "start_hour", "shifts", row_number),
+                _required_int(record, "end_hour", "shifts", row_number),
+            )
+        )
+
+    parsed.sort(key=lambda item: item[0])
+    expected_ids = list(range(len(parsed)))
+    actual_ids = [shift_id for shift_id, _, _, _ in parsed]
+    if actual_ids != expected_ids:
+        raise CsvAdapterError(
+            "shifts.csv shift ids must be consecutive zero-based integers"
+        )
+
+    shifts = [shift_name for _, shift_name, _, _ in parsed]
+    starts = [start for _, _, start, _ in parsed]
+    ends = [end for _, _, _, end in parsed]
     return shifts, starts, ends
 
 
@@ -337,6 +369,12 @@ def _parse_shift_reference(value: str, shift_indices: Dict[str, int]) -> int:
     if shift < 0 or shift >= len(shift_indices):
         raise CsvAdapterError(f"Unknown shift {value}")
     return shift
+
+
+def _shift_name(record: Mapping[str, str], row_number: int) -> str:
+    if _has_value(record, "shift_name"):
+        return _required(record, "shift_name", "shifts", row_number)
+    raise CsvAdapterError(f"shifts row {row_number} missing shift_name")
 
 
 def _parse_bool(value: str, row_number: int) -> bool:
