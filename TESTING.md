@@ -21,7 +21,12 @@ PYTHONPATH=. python -m workforce_scheduling.cli --request-json request.json --re
 The checked-in fixture `tests/fixtures/solve_request_small.json` is a minimal
 valid request for contract tests.
 JSON solve options are bounded at the schema boundary: `0 < time_limit_sec <= 30`,
-`seed` must be a JSON integer, and `use_warm_start` must be a boolean.
+`seed` must be a JSON integer, `use_warm_start` must be a boolean, and
+`response_mode` must be one of `compact`, `standard`, or `debug`. The default
+mode is `debug`, which preserves the full explainability payload. `standard`
+keeps the main solve result plus fairness metrics and shortage diagnostics.
+`compact` keeps only core metrics, assignments, shortages, violations, and the
+objective breakdown.
 
 Run a three-file CSV solve:
 

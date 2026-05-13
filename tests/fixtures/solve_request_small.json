@@ -36,6 +36,7 @@
   "options": {
     "time_limit_sec": 5.0,
     "seed": 1,
-    "use_warm_start": false
+    "use_warm_start": false,
+    "response_mode": "debug"
   }
 }

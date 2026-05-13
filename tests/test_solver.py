@@ -40,6 +40,9 @@ from workforce_scheduling.solve import (
     validate_solution,
 )
 from workforce_scheduling.schemas import (
+    RESPONSE_MODE_COMPACT,
+    RESPONSE_MODE_DEBUG,
+    RESPONSE_MODE_STANDARD,
     SchemaValidationError,
     parse_solve_request,
     solve_payload,
@@ -888,6 +891,7 @@ def test_solve_request_schema_round_trips_problem_data_as_json_safe_payload() ->
         time_limit_sec=3.5,
         seed=9,
         use_warm_start=True,
+        response_mode=RESPONSE_MODE_STANDARD,
     )
 
     _assert_json_object_keys_are_strings(payload)
@@ -897,6 +901,7 @@ def test_solve_request_schema_round_trips_problem_data_as_json_safe_payload() ->
     assert request.options.time_limit_sec == 3.5
     assert request.options.seed == 9
     assert request.options.use_warm_start
+    assert request.options.response_mode == RESPONSE_MODE_STANDARD
     assert request.problem.roles == data.roles
     assert request.problem.days == data.days
     assert request.problem.shifts == data.shifts
@@ -913,6 +918,8 @@ def test_solve_request_schema_defaults_use_warm_start_to_false() -> None:
 
     assert payload["options"]["use_warm_start"] is False
     assert request.options.use_warm_start is False
+    assert payload["options"]["response_mode"] == RESPONSE_MODE_DEBUG
+    assert request.options.response_mode == RESPONSE_MODE_DEBUG
 
 
 def test_solve_request_schema_accepts_maximum_time_limit_boundary() -> None:
@@ -975,6 +982,26 @@ def test_solve_payload_rejects_non_integer_seed(invalid_seed: object) -> None:
     }
 
 
+@pytest.mark.parametrize("invalid_response_mode", ["full", "", 1, False])
+def test_solve_payload_rejects_invalid_response_mode(
+    invalid_response_mode: object,
+) -> None:
+    payload = solve_request_to_payload(_small_fully_feasible_problem())
+    payload["options"]["response_mode"] = invalid_response_mode
+
+    response_payload = solve_payload(payload)
+
+    assert response_payload == {
+        "ok": False,
+        "error": {
+            "type": "SchemaValidationError",
+            "message": (
+                "Solve option response_mode must be one of compact, standard, debug"
+            ),
+        },
+    }
+
+
 def test_solve_response_schema_is_json_safe_and_preserves_solver_components() -> None:
     result = solve(_small_fully_feasible_problem(), time_limit_sec=5.0, seed=1)
     payload = solve_result_to_payload(result)
@@ -1010,6 +1037,58 @@ def test_solve_response_schema_is_json_safe_and_preserves_solver_components() ->
         {"employee_id": 0, "shift": 0, "assignment_count": 1},
         {"employee_id": 1, "shift": 0, "assignment_count": 1},
     ]
+
+
+def test_solve_payload_response_modes_shape_result_without_changing_solution() -> None:
+    data = _small_fully_feasible_problem()
+    compact_payload = solve_request_to_payload(
+        data,
+        time_limit_sec=5.0,
+        seed=1,
+        response_mode=RESPONSE_MODE_COMPACT,
+    )
+    standard_payload = solve_request_to_payload(
+        data,
+        time_limit_sec=5.0,
+        seed=1,
+        response_mode=RESPONSE_MODE_STANDARD,
+    )
+    debug_payload = solve_request_to_payload(
+        data,
+        time_limit_sec=5.0,
+        seed=1,
+        response_mode=RESPONSE_MODE_DEBUG,
+    )
+
+    compact = solve_payload(json.loads(json.dumps(compact_payload)))["result"]
+    standard = solve_payload(json.loads(json.dumps(standard_payload)))["result"]
+    debug = solve_payload(json.loads(json.dumps(debug_payload)))["result"]
+
+    assert compact["assignments"] == standard["assignments"] == debug["assignments"]
+    assert compact["shortages"] == standard["shortages"] == debug["shortages"]
+    assert compact["objective_breakdown"] == standard["objective_breakdown"] == (
+        debug["objective_breakdown"]
+    )
+    assert set(compact) == {
+        "schema_version",
+        "metrics",
+        "assignments",
+        "shortages",
+        "violations",
+        "objective_breakdown",
+    }
+    assert set(standard) == {
+        *set(compact),
+        "fairness_metrics",
+        "shortage_diagnostics",
+    }
+    assert "constraint_metadata" in debug
+    assert "objective_metadata" in debug
+    assert "constraint_records" in debug
+    assert "fairness_metrics" in debug
+    assert "shortage_diagnostics" in debug
+    assert "demanded_slot_diagnostics" in debug
+    assert "assignment_explanations" in debug
 
 
 def test_solve_payload_boundary_matches_direct_solver_output() -> None:
@@ -1227,6 +1306,29 @@ def test_api_solve_endpoint_returns_existing_success_envelope() -> None:
     assert response_payload["ok"]
     assert response_payload["result"]["metrics"]["status"] == "OPTIMAL"
     assert response_payload["result"]["objective_breakdown"]["total_shortage"] == 0
+
+
+def test_api_solve_endpoint_honors_compact_response_mode() -> None:
+    payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+        response_mode=RESPONSE_MODE_COMPACT,
+    )
+
+    response = _api_request("POST", "/solve", json_payload=payload)
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert set(result_payload) == {
+        "schema_version",
+        "metrics",
+        "assignments",
+        "shortages",
+        "violations",
+        "objective_breakdown",
+    }
+    assert result_payload["metrics"]["status"] == "OPTIMAL"
 
 
 def test_api_solve_endpoint_returns_existing_error_envelope() -> None:

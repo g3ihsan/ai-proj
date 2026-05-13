@@ -85,6 +85,11 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
                 "type": "boolean",
                 "default": False,
             },
+            "response_mode": {
+                "type": "string",
+                "allowed": ["compact", "standard", "debug"],
+                "default": "debug",
+            },
         },
         "response_envelope": {
             "success": {"ok": True, "result": "SolveResult payload"},

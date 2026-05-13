@@ -16,6 +16,27 @@ from .warm_start import with_warm_start_hints
 
 SCHEMA_VERSION = 1
 MAX_TIME_LIMIT_SEC = 30.0
+RESPONSE_MODE_COMPACT = "compact"
+RESPONSE_MODE_STANDARD = "standard"
+RESPONSE_MODE_DEBUG = "debug"
+RESPONSE_MODES = (
+    RESPONSE_MODE_COMPACT,
+    RESPONSE_MODE_STANDARD,
+    RESPONSE_MODE_DEBUG,
+)
+COMPACT_RESULT_FIELDS = (
+    "schema_version",
+    "metrics",
+    "assignments",
+    "shortages",
+    "violations",
+    "objective_breakdown",
+)
+STANDARD_RESULT_FIELDS = (
+    *COMPACT_RESULT_FIELDS,
+    "fairness_metrics",
+    "shortage_diagnostics",
+)
 
 
 class SchemaValidationError(ValueError):
@@ -27,6 +48,7 @@ class SolveOptions:
     time_limit_sec: float = 10.0
     seed: int = 1
     use_warm_start: bool = False
+    response_mode: str = RESPONSE_MODE_DEBUG
 
 
 @dataclass(frozen=True)
@@ -41,6 +63,7 @@ def solve_request_to_payload(
     time_limit_sec: float = 10.0,
     seed: int = 1,
     use_warm_start: bool = False,
+    response_mode: str = RESPONSE_MODE_DEBUG,
 ) -> Dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -50,6 +73,7 @@ def solve_request_to_payload(
                 time_limit_sec=time_limit_sec,
                 seed=seed,
                 use_warm_start=use_warm_start,
+                response_mode=response_mode,
             )
         ),
     }
@@ -74,6 +98,11 @@ def parse_solve_request(payload: Mapping[str, Any]) -> SolveRequest:
         time_limit_sec=_time_limit_option(options_payload, "time_limit_sec", 10.0),
         seed=_int_option(options_payload, "seed", 1),
         use_warm_start=_bool_option(options_payload, "use_warm_start", False),
+        response_mode=_response_mode_option(
+            options_payload,
+            "response_mode",
+            RESPONSE_MODE_DEBUG,
+        ),
     )
     try:
         problem = problem_data_from_payload(problem_payload)
@@ -103,7 +132,10 @@ def solve_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
 
     return {
         "ok": True,
-        "result": solve_result_to_payload(result),
+        "result": solve_result_to_payload(
+            result,
+            response_mode=request.options.response_mode,
+        ),
     }
 
 
@@ -160,6 +192,23 @@ def _int_option(
     value = payload.get(key, default)
     if isinstance(value, bool) or not isinstance(value, int):
         raise SchemaValidationError(f"Solve option {key} must be an integer")
+    return value
+
+
+def _response_mode_option(
+    payload: Mapping[str, Any],
+    key: str,
+    default: str,
+) -> str:
+    value = payload.get(key, default)
+    if not isinstance(value, str):
+        raise SchemaValidationError(
+            f"Solve option {key} must be one of {', '.join(RESPONSE_MODES)}"
+        )
+    if value not in RESPONSE_MODES:
+        raise SchemaValidationError(
+            f"Solve option {key} must be one of {', '.join(RESPONSE_MODES)}"
+        )
     return value
 
 
@@ -338,8 +387,18 @@ def problem_data_from_payload(payload: Mapping[str, Any]) -> ProblemData:
     )
 
 
-def solve_result_to_payload(result: SolveResult) -> Dict[str, Any]:
-    return {
+def solve_result_to_payload(
+    result: SolveResult,
+    *,
+    response_mode: str = RESPONSE_MODE_DEBUG,
+) -> Dict[str, Any]:
+    if response_mode not in RESPONSE_MODES:
+        raise SchemaValidationError(
+            "response_mode must be one of "
+            f"{', '.join(RESPONSE_MODES)}"
+        )
+
+    payload = {
         "schema_version": SCHEMA_VERSION,
         "metrics": asdict(result.metrics),
         "assignments": [
@@ -405,6 +464,18 @@ def solve_result_to_payload(result: SolveResult) -> Dict[str, Any]:
             for explanation in result.assignment_explanations
         ],
     }
+    return _shape_solve_result_payload(payload, response_mode)
+
+
+def _shape_solve_result_payload(
+    payload: Dict[str, Any],
+    response_mode: str,
+) -> Dict[str, Any]:
+    if response_mode == RESPONSE_MODE_COMPACT:
+        return {field: payload[field] for field in COMPACT_RESULT_FIELDS}
+    if response_mode == RESPONSE_MODE_STANDARD:
+        return {field: payload[field] for field in STANDARD_RESULT_FIELDS}
+    return payload
 
 
 def _demand_records(data: ProblemData) -> List[Dict[str, Any]]:

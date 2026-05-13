@@ -14,6 +14,7 @@ from .jobs import (
 )
 from .schemas import (
     MAX_TIME_LIMIT_SEC,
+    RESPONSE_MODES,
     SCHEMA_VERSION,
     SolveOptions,
     error_payload,
@@ -58,6 +59,11 @@ async def metadata() -> dict[str, Any]:
             "use_warm_start": {
                 "type": "boolean",
                 "default": default_options.use_warm_start,
+            },
+            "response_mode": {
+                "type": "string",
+                "allowed": list(RESPONSE_MODES),
+                "default": default_options.response_mode,
             },
         },
         "response_envelope": {

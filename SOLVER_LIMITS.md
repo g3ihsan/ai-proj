@@ -83,6 +83,11 @@ Request options are intentionally bounded before the solver is called:
 `0 < time_limit_sec <= 30`, `seed` must be a JSON integer, and
 `use_warm_start` must be a boolean. These limits keep the in-process HTTP
 wrapper from accepting ambiguous or unexpectedly expensive solve requests.
+Solve responses can be shaped with `response_mode`: `debug` returns the full
+solver and explainability payload, `standard` omits debug-level constraint
+records and demanded-slot/assignment detail, and `compact` returns only core
+metrics, assignments, shortages, violations, and objective breakdown. Response
+mode changes serialization only; it does not change solver decisions.
 
 `workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
 It exposes `GET /health`, `GET /metadata`, `POST /solve`, `POST /solve-jobs`,

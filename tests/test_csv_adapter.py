@@ -311,6 +311,7 @@ def test_csv_adapter_payload_uses_explicit_solver_settings(
         "time_limit_sec": 3.5,
         "seed": 7,
         "use_warm_start": True,
+        "response_mode": "debug",
     }
 
 

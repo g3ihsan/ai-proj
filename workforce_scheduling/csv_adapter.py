@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 from .data import Employee, ProblemData, validate_problem_data
-from .schemas import solve_request_to_payload
+from .schemas import RESPONSE_MODE_DEBUG, solve_request_to_payload
 from .solve import Assignment
 
 
@@ -111,6 +111,7 @@ def payload_from_csv_files(
     time_limit_sec: float,
     seed: int,
     use_warm_start: bool,
+    response_mode: str = RESPONSE_MODE_DEBUG,
 ) -> Dict[str, Any]:
     data = problem_data_from_csv_files(
         employees_csv,
@@ -125,6 +126,7 @@ def payload_from_csv_files(
         time_limit_sec=time_limit_sec,
         seed=seed,
         use_warm_start=use_warm_start,
+        response_mode=response_mode,
     )
 
 
