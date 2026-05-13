@@ -12,6 +12,16 @@ from .solve import Assignment
 DEFAULT_MIN_REST_HOURS = 8
 DEFAULT_MAX_CONSECUTIVE_DAYS = 5
 DEFAULT_SHORTAGE_PENALTY = 1000
+METRIC_FIELDS = [
+    "status",
+    "objective_value",
+    "best_bound",
+    "wall_time_sec",
+    "num_conflicts",
+    "num_branches",
+    "num_variables",
+    "num_constraints",
+]
 ROSTER_OUTPUT_HEADER = [
     "record_type",
     "employee_id",
@@ -175,14 +185,17 @@ def csv_rows_from_solve_response(
     result = response_payload.get("result", {})
     metrics = result.get("metrics", {})
     if metrics:
-        rows.append(
-            _csv_row(
-                record_type="summary",
-                status=str(metrics.get("status", "")),
-                value=_csv_value(metrics.get("objective_value")),
-                message="Solver status and objective value",
+        for metric_name in METRIC_FIELDS:
+            if metric_name not in metrics:
+                continue
+            rows.append(
+                _csv_row(
+                    record_type="metric",
+                    status=metric_name,
+                    value=_csv_value(metrics.get(metric_name)),
+                    message=f"Solver metric: {metric_name}",
+                )
             )
-        )
 
     for assignment in sorted(
         result.get("assignments", []),

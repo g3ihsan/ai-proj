@@ -65,8 +65,9 @@ adapter builds the same JSON-safe solve request payload used by
 output uses one standard record shape for assignments and shortages:
 `record_type,employee_id,name,day,shift,shift_name,role,status,value,message`.
 Response-payload-based CSV helpers render the canonical `solve_payload(...)`
-envelope directly, including summary, assignment, shortage, validation, and
-error records where present. All shortage records from the response are emitted,
+envelope directly, including metric, assignment, shortage, validation, and error
+records where present. Metric rows use `status` for the metric name and `value`
+for the metric value. All shortage records from the response are emitted,
 including zero-shortage records, so downstream readers can distinguish covered
 demand from missing rows.
 Request contract failures use `SchemaValidationError` in the error envelope so

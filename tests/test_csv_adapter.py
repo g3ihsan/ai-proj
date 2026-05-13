@@ -8,6 +8,7 @@ from pathlib import Path
 
 from workforce_scheduling.csv_adapter import (
     CsvAdapterError,
+    METRIC_FIELDS,
     ROSTER_OUTPUT_HEADER,
     csv_rows_from_solve_response,
     payload_from_csv_files,
@@ -152,10 +153,12 @@ def test_cli_solves_from_three_csv_files_and_writes_roster(tmp_path: Path) -> No
     assert completed.returncode == 0, completed.stderr
     assert "CSV roster written to:" in completed.stdout
     rows = list(csv.DictReader(roster_csv.open()))
-    assert len(rows) == 13
+    assert len(rows) == 20
     assert list(rows[0].keys()) == ROSTER_OUTPUT_HEADER
-    assert rows[0]["record_type"] == "summary"
-    assert rows[0]["status"] == "OPTIMAL"
+    metric_rows = [row for row in rows if row["record_type"] == "metric"]
+    assert [row["status"] for row in metric_rows] == METRIC_FIELDS
+    assert metric_rows[0]["value"] == "OPTIMAL"
+    assert not any(row["record_type"] == "summary" for row in rows)
 
 
 def test_checked_in_csv_examples_parse_and_solve(tmp_path: Path) -> None:
@@ -295,7 +298,7 @@ def test_csv_adapter_payload_uses_explicit_solver_settings(
     }
 
 
-def test_csv_rows_from_solve_response_include_summary_and_names(
+def test_csv_rows_from_solve_response_include_metric_rows_and_names(
     tmp_path: Path,
 ) -> None:
     employees_csv, shifts_csv, demand_csv = _write_csv_fixture(tmp_path)
@@ -320,9 +323,11 @@ def test_csv_rows_from_solve_response_include_summary_and_names(
     )
 
     assert response_payload["ok"] is True
-    assert rows[0]["record_type"] == "summary"
-    assert rows[0]["status"] == "OPTIMAL"
-    assert rows[0]["message"] == "Solver status and objective value"
+    metric_rows = [row for row in rows if row["record_type"] == "metric"]
+    assert [row["status"] for row in metric_rows] == METRIC_FIELDS
+    assert metric_rows[0]["value"] == "OPTIMAL"
+    assert metric_rows[0]["message"] == "Solver metric: status"
+    assert not any(row["record_type"] == "summary" for row in rows)
     assignment_rows = [
         row for row in rows if row["record_type"] == "assignment"
     ]
@@ -388,16 +393,28 @@ def test_csv_rows_from_solve_response_include_validation_rows() -> None:
 
     assert rows == [
         {
-            "record_type": "summary",
+            "record_type": "metric",
             "employee_id": "",
             "name": "",
             "day": "",
             "shift": "",
             "shift_name": "",
             "role": "",
-            "status": "OPTIMAL",
+            "status": "status",
+            "value": "OPTIMAL",
+            "message": "Solver metric: status",
+        },
+        {
+            "record_type": "metric",
+            "employee_id": "",
+            "name": "",
+            "day": "",
+            "shift": "",
+            "shift_name": "",
+            "role": "",
+            "status": "objective_value",
             "value": 0.0,
-            "message": "Solver status and objective value",
+            "message": "Solver metric: objective_value",
         },
         {
             "record_type": "validation",
