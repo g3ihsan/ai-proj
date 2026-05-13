@@ -60,9 +60,12 @@ solve response are written, including zero-shortage rows; zero-shortage rows
 leave `message` blank, while positive shortage rows include an unfilled-demand
 message. CSV generated from a full `solve_payload(...)` response also includes a
 `record_type=metric` row for each solver metric. Metric rows use `status` for
-the metric name and `value` for the metric value. The output can also include
-`record_type=validation` or `record_type=error` rows when the response contains
-validation violations or an error envelope.
+the metric name and `value` for the metric value. Solver metric rows include
+status, objective value, best bound, wall time, conflicts, branches, variables,
+and constraints. Business metric rows include total shortage, labor cost,
+workload spread, and validation violation count when available. The output can
+also include `record_type=validation` or `record_type=error` rows when the
+response contains validation violations or an error envelope.
 
 Run the thin HTTP wrapper locally:
 

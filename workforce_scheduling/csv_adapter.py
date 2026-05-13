@@ -12,7 +12,7 @@ from .solve import Assignment
 DEFAULT_MIN_REST_HOURS = 8
 DEFAULT_MAX_CONSECUTIVE_DAYS = 5
 DEFAULT_SHORTAGE_PENALTY = 1000
-METRIC_FIELDS = [
+SOLVER_METRIC_FIELDS = [
     "status",
     "objective_value",
     "best_bound",
@@ -22,6 +22,13 @@ METRIC_FIELDS = [
     "num_variables",
     "num_constraints",
 ]
+BUSINESS_METRIC_FIELDS = [
+    "total_shortage",
+    "labor_cost_value",
+    "workload_spread",
+    "validation_violation_count",
+]
+METRIC_FIELDS = [*SOLVER_METRIC_FIELDS, *BUSINESS_METRIC_FIELDS]
 ROSTER_OUTPUT_HEADER = [
     "record_type",
     "employee_id",
@@ -148,7 +155,6 @@ def write_roster_solution_csv(
                 }
                 for (day, shift, role), shortage_count in shortages.items()
             ],
-            "violations": [],
         },
     }
     write_solve_response_csv(
@@ -184,18 +190,15 @@ def csv_rows_from_solve_response(
 
     result = response_payload.get("result", {})
     metrics = result.get("metrics", {})
-    if metrics:
-        for metric_name in METRIC_FIELDS:
-            if metric_name not in metrics:
-                continue
-            rows.append(
-                _csv_row(
-                    record_type="metric",
-                    status=metric_name,
-                    value=_csv_value(metrics.get(metric_name)),
-                    message=f"Solver metric: {metric_name}",
-                )
+    for metric_name, metric_value, metric_kind in _metric_items(result, metrics):
+        rows.append(
+            _csv_row(
+                record_type="metric",
+                status=metric_name,
+                value=_csv_value(metric_value),
+                message=f"{metric_kind} metric: {metric_name}",
             )
+        )
 
     for assignment in sorted(
         result.get("assignments", []),
@@ -308,6 +311,45 @@ def _csv_row(
 
 def _csv_value(value: Any) -> int | float | str:
     return "" if value is None else value
+
+
+def _metric_items(
+    result: Mapping[str, Any],
+    metrics: Mapping[str, Any],
+) -> List[Tuple[str, Any, str]]:
+    items: List[Tuple[str, Any, str]] = []
+    for metric_name in SOLVER_METRIC_FIELDS:
+        if metric_name in metrics:
+            items.append((metric_name, metrics.get(metric_name), "Solver"))
+
+    objective_breakdown = result.get("objective_breakdown", {})
+    if isinstance(objective_breakdown, Mapping):
+        for metric_name in ("total_shortage", "labor_cost_value"):
+            if metric_name in objective_breakdown:
+                items.append(
+                    (metric_name, objective_breakdown.get(metric_name), "Business")
+                )
+
+    fairness_metrics = result.get("fairness_metrics", {})
+    if isinstance(fairness_metrics, Mapping) and "workload_spread" in fairness_metrics:
+        items.append(
+            (
+                "workload_spread",
+                fairness_metrics.get("workload_spread"),
+                "Business",
+            )
+        )
+
+    if "violations" in result:
+        items.append(
+            (
+                "validation_violation_count",
+                len(result.get("violations", [])),
+                "Business",
+            )
+        )
+
+    return items
 
 
 def _read_records(path: str | Path, label: str) -> List[Mapping[str, str]]:

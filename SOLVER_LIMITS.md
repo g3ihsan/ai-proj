@@ -67,9 +67,11 @@ output uses one standard record shape for assignments and shortages:
 Response-payload-based CSV helpers render the canonical `solve_payload(...)`
 envelope directly, including metric, assignment, shortage, validation, and error
 records where present. Metric rows use `status` for the metric name and `value`
-for the metric value. All shortage records from the response are emitted,
-including zero-shortage records, so downstream readers can distinguish covered
-demand from missing rows.
+for the metric value. They include solver metrics plus business metrics such as
+total shortage, labor cost, workload spread, and validation violation count when
+those fields are present in the response. All shortage records from the response
+are emitted, including zero-shortage records, so downstream readers can
+distinguish covered demand from missing rows.
 Request contract failures use `SchemaValidationError` in the error envelope so
 future wrappers can distinguish malformed JSON payloads from solver infeasibility
 or normal validation violations.
