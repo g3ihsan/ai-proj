@@ -102,6 +102,10 @@ p {
   background: var(--danger);
 }
 
+.status-dot.busy {
+  background: var(--accent);
+}
+
 .workspace {
   display: grid;
   gap: 16px;

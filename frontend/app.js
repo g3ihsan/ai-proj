@@ -45,10 +45,12 @@ const state = {
   activeTab: "assignments",
   csvText: "",
   demoCsvFiles: {},
+  isBusy: false,
   rows: {
     assignments: [],
     shortages: [],
     metrics: [],
+    issues: [],
   },
 };
 
@@ -100,6 +102,36 @@ function logError(prefix, error, context = {}) {
   log(prefix, payload);
 }
 
+function setBusy(isBusy, statusText = "") {
+  state.isBusy = isBusy;
+  [
+    elements.checkApi,
+    elements.loadDemoCsvs,
+    elements.solveJson,
+    elements.solveCsv,
+    elements.submitJob,
+  ].forEach((button) => {
+    button.disabled = isBusy;
+  });
+  elements.downloadCsv.disabled = isBusy || !state.csvText;
+  elements.serviceDot.classList.toggle("busy", isBusy);
+  if (statusText) {
+    elements.serviceStatus.textContent = statusText;
+  }
+}
+
+async function withBusy(statusText, operation) {
+  if (state.isBusy) {
+    return undefined;
+  }
+  setBusy(true, statusText);
+  try {
+    return await operation();
+  } finally {
+    setBusy(false);
+  }
+}
+
 function apiUrl(path) {
   return `${elements.apiBase.value.replace(/\/$/, "")}${path}`;
 }
@@ -135,6 +167,7 @@ function renderTable() {
     assignments: ["employee_id", "name", "day", "shift", "shift_name", "role", "status"],
     shortages: ["day", "shift", "shift_name", "role", "status", "value", "message"],
     metrics: ["status", "value", "message"],
+    issues: ["type", "status", "message", "request_id"],
   }[state.activeTab];
 
   elements.resultHead.innerHTML = `<tr>${columns.map((column) => `<th>${column}</th>`).join("")}</tr>`;
@@ -180,6 +213,12 @@ function setRowsFromSolveResult(result) {
     value,
     message: "Solver metric",
   }));
+  state.rows.issues = (result.violations || []).map((violation) => ({
+    type: "validation",
+    status: "violation",
+    message: String(violation),
+    request_id: "",
+  }));
   const objective = result.objective_breakdown || {};
   if ("total_shortage" in objective) {
     state.rows.metrics.push({
@@ -201,7 +240,23 @@ function setRowsFromSolveResult(result) {
     totalShortage: objective.total_shortage,
     laborCost: objective.labor_cost_value,
   });
+  if (state.rows.issues.length > 0) {
+    activateTab("issues");
+    return;
+  }
   renderTable();
+}
+
+function setIssue(error, status = "error") {
+  state.rows.issues = [
+    {
+      type: error.type || error.name || "Error",
+      status,
+      message: error.message,
+      request_id: error.request_id || "",
+    },
+  ];
+  activateTab("issues");
 }
 
 function currentSolveRequest({
@@ -242,6 +297,14 @@ function setRowsFromCsv(csvText) {
   state.rows.assignments = records.filter((row) => row.record_type === "assignment");
   state.rows.shortages = records.filter((row) => row.record_type === "shortage");
   state.rows.metrics = records.filter((row) => row.record_type === "metric");
+  state.rows.issues = records
+    .filter((row) => ["validation", "error"].includes(row.record_type))
+    .map((row) => ({
+      type: row.record_type,
+      status: row.status,
+      message: row.message,
+      request_id: "",
+    }));
   const metricValue = (name) =>
     state.rows.metrics.find((row) => row.status === name)?.value ?? "";
   renderSummary({
@@ -251,6 +314,10 @@ function setRowsFromCsv(csvText) {
     laborCost: metricValue("labor_cost_value"),
   });
   elements.downloadCsv.disabled = false;
+  if (state.rows.issues.length > 0) {
+    activateTab("issues");
+    return;
+  }
   renderTable();
 }
 
@@ -300,82 +367,96 @@ function escapeHtml(value) {
 }
 
 async function checkApi() {
-  try {
-    const response = await apiFetch("/metadata");
-    const payload = await response.json();
-    if (!response.ok || !payload.ok) throw new Error(payload.error?.message || "API check failed");
-    setServiceStatus(true, "API ready");
-    elements.metadataGrid.innerHTML = [
-      metricCard("Schema", payload.schema_version),
-      metricCard("Max JSON bytes", payload.request_limits?.max_json_request_bytes),
-      metricCard("Max CSV bytes", payload.request_limits?.max_csv_upload_bytes),
-      metricCard("Workers", payload.job_execution?.max_workers),
-    ].join("");
-    log("Metadata loaded", payload.endpoints);
-  } catch (error) {
-    setServiceStatus(false, "API unavailable");
-    logError("API check failed", error);
-  }
+  await withBusy("Checking API...", async () => {
+    try {
+      const response = await apiFetch("/metadata");
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error?.message || "API check failed");
+      setServiceStatus(true, "API ready");
+      elements.metadataGrid.innerHTML = [
+        metricCard("Schema", payload.schema_version),
+        metricCard("Max JSON bytes", payload.request_limits?.max_json_request_bytes),
+        metricCard("Max CSV bytes", payload.request_limits?.max_csv_upload_bytes),
+        metricCard("Workers", payload.job_execution?.max_workers),
+      ].join("");
+      state.rows.issues = [];
+      renderTable();
+      log("Metadata loaded", payload.endpoints);
+    } catch (error) {
+      setServiceStatus(false, "API unavailable");
+      setIssue(error);
+      logError("API check failed", error);
+    }
+  });
 }
 
 async function solveJson() {
-  try {
-    const payload = currentSolveRequest({ applySelectedResponseMode: true });
-    writeRequest(payload);
-    const response = await apiFetch("/solve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const envelope = await response.json();
-    if (!response.ok || !envelope.ok) {
-      throw responseError(response, envelope);
+  await withBusy("Solving JSON...", async () => {
+    try {
+      const payload = currentSolveRequest({ applySelectedResponseMode: true });
+      writeRequest(payload);
+      const response = await apiFetch("/solve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const envelope = await response.json();
+      if (!response.ok || !envelope.ok) {
+        throw responseError(response, envelope);
+      }
+      state.csvText = "";
+      setRowsFromSolveResult(envelope.result);
+      elements.serviceStatus.textContent = "JSON solve complete";
+      log("JSON solve completed", {
+        response_mode: payload.options.response_mode,
+        metrics: envelope.result.metrics,
+      });
+    } catch (error) {
+      setIssue(error);
+      logError("JSON solve failed", error);
     }
-    state.csvText = "";
-    elements.downloadCsv.disabled = true;
-    setRowsFromSolveResult(envelope.result);
-    log("JSON solve completed", {
-      response_mode: payload.options.response_mode,
-      metrics: envelope.result.metrics,
-    });
-  } catch (error) {
-    logError("JSON solve failed", error);
-  }
+  });
 }
 
 async function solveCsv() {
-  const csvFiles = selectedCsvFiles();
-  if (!csvFiles.employees || !csvFiles.shifts || !csvFiles.demand) {
-    log("CSV solve requires uploaded files or loaded demo CSVs.");
-    return;
-  }
-  const formData = new FormData();
-  formData.append("employees_csv", csvFiles.employees);
-  formData.append("shifts_csv", csvFiles.shifts);
-  formData.append("demand_csv", csvFiles.demand);
-  formData.append("min_rest_hours", document.querySelector("#min-rest-hours").value);
-  formData.append("max_consecutive_days", document.querySelector("#max-consecutive-days").value);
-  formData.append("shortage_penalty", document.querySelector("#shortage-penalty").value);
-  formData.append("time_limit_sec", document.querySelector("#time-limit").value);
-  formData.append("seed", document.querySelector("#seed").value);
-  formData.append("use_warm_start", document.querySelector("#use-warm-start").checked);
-
-  try {
-    const response = await apiFetch("/solve-csv", { method: "POST", body: formData });
-    const contentType = response.headers.get("content-type") || "";
-    if (!response.ok) {
-      if (contentType.includes("application/json")) {
-        const envelope = await response.json();
-        throw responseError(response, envelope);
-      }
-      throw new Error("CSV solve failed");
+  await withBusy("Uploading CSV...", async () => {
+    const csvFiles = selectedCsvFiles();
+    if (!csvFiles.employees || !csvFiles.shifts || !csvFiles.demand) {
+      const error = new Error("CSV solve requires uploaded files or loaded demo CSVs.");
+      setIssue(error, "missing_input");
+      logError("CSV solve failed", error);
+      return;
     }
-    const csvText = await response.text();
-    setRowsFromCsv(csvText);
-    log("CSV solve completed.");
-  } catch (error) {
-    logError("CSV solve failed", error);
-  }
+    const formData = new FormData();
+    formData.append("employees_csv", csvFiles.employees);
+    formData.append("shifts_csv", csvFiles.shifts);
+    formData.append("demand_csv", csvFiles.demand);
+    formData.append("min_rest_hours", document.querySelector("#min-rest-hours").value);
+    formData.append("max_consecutive_days", document.querySelector("#max-consecutive-days").value);
+    formData.append("shortage_penalty", document.querySelector("#shortage-penalty").value);
+    formData.append("time_limit_sec", document.querySelector("#time-limit").value);
+    formData.append("seed", document.querySelector("#seed").value);
+    formData.append("use_warm_start", document.querySelector("#use-warm-start").checked);
+
+    try {
+      const response = await apiFetch("/solve-csv", { method: "POST", body: formData });
+      const contentType = response.headers.get("content-type") || "";
+      if (!response.ok) {
+        if (contentType.includes("application/json")) {
+          const envelope = await response.json();
+          throw responseError(response, envelope);
+        }
+        throw new Error("CSV solve failed");
+      }
+      const csvText = await response.text();
+      setRowsFromCsv(csvText);
+      elements.serviceStatus.textContent = "CSV solve complete";
+      log("CSV solve completed.");
+    } catch (error) {
+      setIssue(error);
+      logError("CSV solve failed", error);
+    }
+  });
 }
 
 function selectedCsvFiles() {
@@ -390,20 +471,26 @@ function selectedCsvFiles() {
 }
 
 async function loadDemoCsvs() {
-  try {
-    state.demoCsvFiles = {
-      employees: await fetchDemoCsv("employees.csv"),
-      shifts: await fetchDemoCsv("shifts.csv"),
-      demand: await fetchDemoCsv("demand.csv"),
-    };
-    elements.csvDemoStatus.textContent =
-      "Demo CSVs loaded from /viewer/examples. Uploaded files still take precedence.";
-    log("Demo CSV files loaded.");
-  } catch (error) {
-    state.demoCsvFiles = {};
-    elements.csvDemoStatus.textContent = "Demo CSV load failed.";
-    log(`Demo CSV load failed: ${error.message}`);
-  }
+  await withBusy("Loading demo CSVs...", async () => {
+    try {
+      state.demoCsvFiles = {
+        employees: await fetchDemoCsv("employees.csv"),
+        shifts: await fetchDemoCsv("shifts.csv"),
+        demand: await fetchDemoCsv("demand.csv"),
+      };
+      elements.csvDemoStatus.textContent =
+        "Demo CSVs loaded from /viewer/examples. Uploaded files still take precedence.";
+      state.rows.issues = [];
+      elements.serviceStatus.textContent = "Demo CSVs loaded";
+      renderTable();
+      log("Demo CSV files loaded.");
+    } catch (error) {
+      state.demoCsvFiles = {};
+      elements.csvDemoStatus.textContent = "Demo CSV load failed.";
+      setIssue(error);
+      logError("Demo CSV load failed", error);
+    }
+  });
 }
 
 async function fetchDemoCsv(filename) {
@@ -416,26 +503,30 @@ async function fetchDemoCsv(filename) {
 }
 
 async function submitJob() {
-  try {
-    const payload = currentSolveRequest({ applySelectedResponseMode: true });
-    writeRequest(payload);
-    const submitResponse = await apiFetch("/solve-jobs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const submitEnvelope = await submitResponse.json();
-    if (!submitResponse.ok || !submitEnvelope.ok) {
-      throw responseError(submitResponse, submitEnvelope);
+  await withBusy("Submitting job...", async () => {
+    try {
+      const payload = currentSolveRequest({ applySelectedResponseMode: true });
+      writeRequest(payload);
+      const submitResponse = await apiFetch("/solve-jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const submitEnvelope = await submitResponse.json();
+      if (!submitResponse.ok || !submitEnvelope.ok) {
+        throw responseError(submitResponse, submitEnvelope);
+      }
+      log("Job submitted", {
+        response_mode: payload.options.response_mode,
+        job: submitEnvelope.job,
+      });
+      elements.serviceStatus.textContent = "Polling job...";
+      await pollJob(submitEnvelope.status_url);
+    } catch (error) {
+      setIssue(error);
+      logError("Job failed", error);
     }
-    log("Job submitted", {
-      response_mode: payload.options.response_mode,
-      job: submitEnvelope.job,
-    });
-    await pollJob(submitEnvelope.status_url);
-  } catch (error) {
-    logError("Job failed", error);
-  }
+  });
 }
 
 async function pollJob(statusUrl) {
@@ -446,6 +537,7 @@ async function pollJob(statusUrl) {
     const job = envelope.job;
     if (job.status === "succeeded") {
       setRowsFromSolveResult(job.result);
+      elements.serviceStatus.textContent = "Job succeeded";
       log("Job succeeded", { job_id: job.job_id, duration_sec: job.duration_sec });
       return;
     }
@@ -476,13 +568,19 @@ function downloadCsv() {
   URL.revokeObjectURL(url);
 }
 
-document.querySelectorAll(".tab").forEach((button) => {
-  button.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
-    button.classList.add("active");
-    state.activeTab = button.dataset.tab;
-    renderTable();
+function activateTab(tabName) {
+  document.querySelectorAll(".tab").forEach((tab) => {
+    const isActive = tab.dataset.tab === tabName;
+    tab.classList.toggle("active", isActive);
+    if (isActive) {
+      state.activeTab = tabName;
+    }
   });
+  renderTable();
+}
+
+document.querySelectorAll(".tab").forEach((button) => {
+  button.addEventListener("click", () => activateTab(button.dataset.tab));
 });
 
 elements.apiBase.value = defaultApiBase();

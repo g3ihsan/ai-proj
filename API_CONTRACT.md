@@ -47,7 +47,8 @@ consistently. The viewer calls the existing JSON, job, and CSV endpoints only;
 it has no persistence, auth, or separate scheduling behavior. Checked-in demo
 CSV files are served read-only under `/viewer/examples/`. The viewer exposes a
 `compact`/`standard`/`debug` response mode selector for the canonical JSON solve
-request.
+request, disables action buttons while operations are running, and shows API or
+validation problems in an Issues tab.
 
 ## Endpoints
 
