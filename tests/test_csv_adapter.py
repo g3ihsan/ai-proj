@@ -92,15 +92,23 @@ def test_csv_adapter_builds_problem_data_and_writes_roster(tmp_path: Path) -> No
     assert result.objective_breakdown.total_shortage == 0
 
     rows = list(csv.DictReader(roster_csv.open()))
-    assert len(rows) == 4
+    assert len(rows) == 12
     assert list(rows[0].keys()) == ROSTER_OUTPUT_HEADER
-    assert {row["record_type"] for row in rows} == {"assignment"}
-    assert {row["shift"] for row in rows} <= {"0", "1"}
-    assert {row["shift_name"] for row in rows} <= {"morning", "evening"}
-    assert {row["name"] for row in rows} <= {"Asha", "Ravi", "Meera"}
-    assert all(row["status"] == "assigned" for row in rows)
-    assert all(row["value"] == "1" for row in rows)
-    assert all(row["message"] == "" for row in rows)
+    assignment_rows = [
+        row for row in rows if row["record_type"] == "assignment"
+    ]
+    shortage_rows = [row for row in rows if row["record_type"] == "shortage"]
+    assert len(assignment_rows) == 4
+    assert len(shortage_rows) == 8
+    assert {row["shift"] for row in assignment_rows} <= {"0", "1"}
+    assert {row["shift_name"] for row in assignment_rows} <= {"morning", "evening"}
+    assert {row["name"] for row in assignment_rows} <= {"Asha", "Ravi", "Meera"}
+    assert all(row["status"] == "assigned" for row in assignment_rows)
+    assert all(row["value"] == "1" for row in assignment_rows)
+    assert all(row["message"] == "" for row in assignment_rows)
+    assert all(row["status"] == "unfilled" for row in shortage_rows)
+    assert all(row["value"] == "0" for row in shortage_rows)
+    assert all(row["message"] == "" for row in shortage_rows)
 
 
 def test_cli_solves_from_three_csv_files_and_writes_roster(tmp_path: Path) -> None:
@@ -144,7 +152,7 @@ def test_cli_solves_from_three_csv_files_and_writes_roster(tmp_path: Path) -> No
     assert completed.returncode == 0, completed.stderr
     assert "CSV roster written to:" in completed.stdout
     rows = list(csv.DictReader(roster_csv.open()))
-    assert len(rows) == 5
+    assert len(rows) == 13
     assert list(rows[0].keys()) == ROSTER_OUTPUT_HEADER
     assert rows[0]["record_type"] == "summary"
     assert rows[0]["status"] == "OPTIMAL"
@@ -169,6 +177,7 @@ def test_checked_in_csv_examples_parse_and_solve(tmp_path: Path) -> None:
     assert result.metrics.status == "OPTIMAL"
     assert result.objective_breakdown.total_shortage == 0
     assert list(rows[0].keys()) == ROSTER_OUTPUT_HEADER
+    assert len([row for row in rows if row["record_type"] == "shortage"]) == 8
 
 
 def test_csv_adapter_rejects_missing_explicit_availability_column(
@@ -317,7 +326,9 @@ def test_csv_rows_from_solve_response_include_summary_and_names(
     assignment_rows = [
         row for row in rows if row["record_type"] == "assignment"
     ]
+    shortage_rows = [row for row in rows if row["record_type"] == "shortage"]
     assert len(assignment_rows) == 4
+    assert len(shortage_rows) == 8
     assert {row["name"] for row in assignment_rows} <= {
         "Asha",
         "Ravi",
@@ -327,6 +338,8 @@ def test_csv_rows_from_solve_response_include_summary_and_names(
         "morning",
         "evening",
     }
+    assert all(row["value"] == 0 for row in shortage_rows)
+    assert all(row["message"] == "" for row in shortage_rows)
 
 
 def test_write_solve_response_csv_writes_error_rows(tmp_path: Path) -> None:
@@ -464,14 +477,23 @@ def test_csv_roster_output_includes_shortage_records(tmp_path: Path) -> None:
     shortage_rows = [row for row in rows if row["record_type"] == "shortage"]
 
     assert list(rows[0].keys()) == ROSTER_OUTPUT_HEADER
-    assert len(shortage_rows) == 1
-    shortage_row = shortage_rows[0]
-    assert shortage_row["employee_id"] == ""
-    assert shortage_row["name"] == ""
-    assert shortage_row["day"] == "1"
-    assert shortage_row["shift"] in {"0", "1"}
-    assert shortage_row["shift_name"] in {"morning", "evening"}
-    assert shortage_row["role"] == "worker"
-    assert shortage_row["status"] == "unfilled"
-    assert shortage_row["value"] == "1"
-    assert shortage_row["message"] == "Unfilled demand for 1 worker slot(s)"
+    positive_shortage_rows = [
+        row for row in shortage_rows if row["value"] != "0"
+    ]
+    zero_shortage_rows = [row for row in shortage_rows if row["value"] == "0"]
+
+    assert len(shortage_rows) == 8
+    assert len(positive_shortage_rows) == 1
+    assert len(zero_shortage_rows) == 7
+    positive_shortage = positive_shortage_rows[0]
+    assert positive_shortage["employee_id"] == ""
+    assert positive_shortage["name"] == ""
+    assert positive_shortage["day"] == "1"
+    assert positive_shortage["shift"] in {"0", "1"}
+    assert positive_shortage["shift_name"] in {"morning", "evening"}
+    assert positive_shortage["role"] == "worker"
+    assert positive_shortage["status"] == "unfilled"
+    assert positive_shortage["value"] == "1"
+    assert positive_shortage["message"] == "Unfilled demand for 1 worker slot(s)"
+    assert all(row["status"] == "unfilled" for row in zero_shortage_rows)
+    assert all(row["message"] == "" for row in zero_shortage_rows)

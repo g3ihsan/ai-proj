@@ -66,7 +66,9 @@ output uses one standard record shape for assignments and shortages:
 `record_type,employee_id,name,day,shift,shift_name,role,status,value,message`.
 Response-payload-based CSV helpers render the canonical `solve_payload(...)`
 envelope directly, including summary, assignment, shortage, validation, and
-error records where present.
+error records where present. All shortage records from the response are emitted,
+including zero-shortage records, so downstream readers can distinguish covered
+demand from missing rows.
 Request contract failures use `SchemaValidationError` in the error envelope so
 future wrappers can distinguish malformed JSON payloads from solver infeasibility
 or normal validation violations.

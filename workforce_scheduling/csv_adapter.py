@@ -218,8 +218,6 @@ def csv_rows_from_solve_response(
         ),
     ):
         shortage_count = int(shortage["shortage_count"])
-        if shortage_count <= 0:
-            continue
         shift = int(shortage["shift"])
         role = str(shortage["role"])
         rows.append(
@@ -231,7 +229,11 @@ def csv_rows_from_solve_response(
                 role=role,
                 status="unfilled",
                 value=shortage_count,
-                message=f"Unfilled demand for {shortage_count} {role} slot(s)",
+                message=(
+                    f"Unfilled demand for {shortage_count} {role} slot(s)"
+                    if shortage_count > 0
+                    else ""
+                ),
             )
         )
 
