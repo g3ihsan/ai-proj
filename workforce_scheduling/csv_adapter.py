@@ -239,8 +239,8 @@ def _parse_employees(
                     "employees",
                     row_number,
                 ),
-                availability=_parse_availability(
-                    _required(record, "availability", "employees", row_number),
+                availability=_parse_employee_availability(
+                    record,
                     num_days,
                     num_shifts,
                     row_number,
@@ -250,7 +250,49 @@ def _parse_employees(
     return employees
 
 
-def _parse_availability(
+def _parse_employee_availability(
+    record: Mapping[str, str],
+    num_days: int,
+    num_shifts: int,
+    row_number: int,
+) -> List[List[bool]]:
+    expected_fields = [
+        f"available_day{day}_shift{shift}"
+        for day in range(num_days)
+        for shift in range(num_shifts)
+    ]
+    if all(_has_value(record, field) for field in expected_fields):
+        return [
+            [
+                _parse_bool(
+                    _required(
+                        record,
+                        f"available_day{day}_shift{shift}",
+                        "employees",
+                        row_number,
+                    ),
+                    row_number,
+                )
+                for shift in range(num_shifts)
+            ]
+            for day in range(num_days)
+        ]
+
+    if _has_value(record, "availability"):
+        return _parse_compact_availability(
+            _required(record, "availability", "employees", row_number),
+            num_days,
+            num_shifts,
+            row_number,
+        )
+
+    missing = next(
+        field for field in expected_fields if not _has_value(record, field)
+    )
+    raise CsvAdapterError(f"employees row {row_number} missing {missing}")
+
+
+def _parse_compact_availability(
     value: str,
     num_days: int,
     num_shifts: int,
@@ -306,6 +348,11 @@ def _parse_bool(value: str, row_number: int) -> bool:
     raise CsvAdapterError(
         f"employees row {row_number} availability values must be booleans"
     )
+
+
+def _has_value(record: Mapping[str, str], field: str) -> bool:
+    value = record.get(field)
+    return value is not None and value.strip() != ""
 
 
 def _split_pipe(value: str) -> List[str]:

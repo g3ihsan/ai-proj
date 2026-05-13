@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from workforce_scheduling.csv_adapter import (
+    CsvAdapterError,
     problem_data_from_csv_files,
     write_roster_solution_csv,
 )
@@ -21,9 +22,14 @@ def _write_csv_fixture(directory: Path) -> tuple[Path, Path, Path]:
     employees_csv.write_text(
         "\n".join(
             [
-                "employee_id,name,roles,hourly_cost,max_weekly_hours,availability",
-                "0,Alice,worker,20,40,1;1",
-                "1,Bob,worker,20,40,1;1",
+                (
+                    "employee_id,name,roles,hourly_cost,max_weekly_hours,"
+                    "available_day0_shift0,available_day0_shift1,"
+                    "available_day1_shift0,available_day1_shift1"
+                ),
+                "0,Asha,worker|supervisor,20,40,true,true,true,false",
+                "1,Ravi,worker,15,40,true,true,true,true",
+                "2,Meera,worker,18,40,true,false,true,true",
             ]
         )
         + "\n"
@@ -32,7 +38,8 @@ def _write_csv_fixture(directory: Path) -> tuple[Path, Path, Path]:
         "\n".join(
             [
                 "shift,start_hour,end_hour,min_rest_hours,max_consecutive_days,shortage_penalty",
-                "day,8,16,8,5,1000",
+                "morning,8,16,8,5,1000",
+                "evening,16,24,8,5,1000",
             ]
         )
         + "\n"
@@ -41,8 +48,10 @@ def _write_csv_fixture(directory: Path) -> tuple[Path, Path, Path]:
         "\n".join(
             [
                 "day,shift,role,required",
-                "0,day,worker,1",
-                "1,day,worker,1",
+                "0,morning,worker,1",
+                "0,evening,supervisor,1",
+                "1,morning,worker,1",
+                "1,evening,worker,1",
             ]
         )
         + "\n"
@@ -58,16 +67,16 @@ def test_csv_adapter_builds_problem_data_and_writes_roster(tmp_path: Path) -> No
     result = solve(data, time_limit_sec=5.0, seed=1)
     write_roster_solution_csv(roster_csv, data, result.assignments, result.shortages)
 
-    assert data.roles == ["worker"]
+    assert data.roles == ["worker", "supervisor"]
     assert data.days == [0, 1]
-    assert data.shifts == ["day"]
+    assert data.shifts == ["morning", "evening"]
+    assert data.employees[0].availability == [[True, True], [True, False]]
     assert result.metrics.status == "OPTIMAL"
     assert result.objective_breakdown.total_shortage == 0
 
     rows = list(csv.DictReader(roster_csv.open()))
-    assert len(rows) == 2
-    assert {row["employee_name"] for row in rows} == {"Alice", "Bob"}
-    assert all(row["shift"] == "day" for row in rows)
+    assert len(rows) == 4
+    assert {row["employee_name"] for row in rows} <= {"Asha", "Ravi", "Meera"}
     assert all(row["shortage_count"] == "0" for row in rows)
 
 
@@ -106,4 +115,30 @@ def test_cli_solves_from_three_csv_files_and_writes_roster(tmp_path: Path) -> No
     assert completed.returncode == 0, completed.stderr
     assert "CSV roster written to:" in completed.stdout
     rows = list(csv.DictReader(roster_csv.open()))
-    assert len(rows) == 2
+    assert len(rows) == 4
+
+
+def test_csv_adapter_rejects_missing_explicit_availability_column(
+    tmp_path: Path,
+) -> None:
+    employees_csv, shifts_csv, demand_csv = _write_csv_fixture(tmp_path)
+    employees_csv.write_text(
+        "\n".join(
+            [
+                (
+                    "employee_id,name,roles,hourly_cost,max_weekly_hours,"
+                    "available_day0_shift0,available_day0_shift1,"
+                    "available_day1_shift0"
+                ),
+                "0,Asha,worker|supervisor,20,40,true,true,true",
+            ]
+        )
+        + "\n"
+    )
+
+    try:
+        problem_data_from_csv_files(employees_csv, shifts_csv, demand_csv)
+    except CsvAdapterError as exc:
+        assert "missing available_day1_shift1" in str(exc)
+    else:
+        raise AssertionError("Expected CsvAdapterError")

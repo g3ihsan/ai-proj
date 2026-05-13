@@ -31,12 +31,14 @@ PYTHONPATH=. python -m workforce_scheduling.cli --employees-csv employees.csv --
 
 CSV contract:
 
-- `employees.csv`: `employee_id,name,roles,hourly_cost,max_weekly_hours,availability`
+- `employees.csv`: `employee_id,name,roles,hourly_cost,max_weekly_hours,available_day0_shift0,...`
 - `shifts.csv`: `shift,start_hour,end_hour`
 - `demand.csv`: `day,shift,role,required`
 
-Use `|` between multiple employee roles. The `availability` field uses `;`
-between day rows and `|` between shift values, for example `1|0;1|1`.
+Use `|` between multiple employee roles. Add one explicit availability column
+for every day/shift combination in the demand and shift files, using the pattern
+`available_day{day_index}_shift{shift_index}`. Values may be `true`/`false`,
+`yes`/`no`, or `1`/`0`.
 
 Run the thin HTTP wrapper locally:
 

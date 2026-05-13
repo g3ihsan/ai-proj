@@ -52,6 +52,9 @@ requests or solver input errors.
 JSON remains the canonical internal service contract. The three-file CSV
 boundary is a file adapter only: it converts `employees.csv`, `shifts.csv`, and
 `demand.csv` into `ProblemData`, runs the same solver, and writes one roster CSV.
+Employee availability should be provided with explicit
+`available_day{day}_shift{shift}` columns so non-technical managers can inspect
+and edit the file without decoding a compact matrix.
 Request contract failures use `SchemaValidationError` in the error envelope so
 future wrappers can distinguish malformed JSON payloads from solver infeasibility
 or normal validation violations.
