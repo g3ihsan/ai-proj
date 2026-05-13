@@ -1,0 +1,109 @@
+from __future__ import annotations
+
+import csv
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from workforce_scheduling.csv_adapter import (
+    problem_data_from_csv_files,
+    write_roster_solution_csv,
+)
+from workforce_scheduling.solve import solve
+
+
+def _write_csv_fixture(directory: Path) -> tuple[Path, Path, Path]:
+    employees_csv = directory / "employees.csv"
+    shifts_csv = directory / "shifts.csv"
+    demand_csv = directory / "demand.csv"
+
+    employees_csv.write_text(
+        "\n".join(
+            [
+                "employee_id,name,roles,hourly_cost,max_weekly_hours,availability",
+                "0,Alice,worker,20,40,1;1",
+                "1,Bob,worker,20,40,1;1",
+            ]
+        )
+        + "\n"
+    )
+    shifts_csv.write_text(
+        "\n".join(
+            [
+                "shift,start_hour,end_hour,min_rest_hours,max_consecutive_days,shortage_penalty",
+                "day,8,16,8,5,1000",
+            ]
+        )
+        + "\n"
+    )
+    demand_csv.write_text(
+        "\n".join(
+            [
+                "day,shift,role,required",
+                "0,day,worker,1",
+                "1,day,worker,1",
+            ]
+        )
+        + "\n"
+    )
+    return employees_csv, shifts_csv, demand_csv
+
+
+def test_csv_adapter_builds_problem_data_and_writes_roster(tmp_path: Path) -> None:
+    employees_csv, shifts_csv, demand_csv = _write_csv_fixture(tmp_path)
+    roster_csv = tmp_path / "roster.csv"
+
+    data = problem_data_from_csv_files(employees_csv, shifts_csv, demand_csv)
+    result = solve(data, time_limit_sec=5.0, seed=1)
+    write_roster_solution_csv(roster_csv, data, result.assignments, result.shortages)
+
+    assert data.roles == ["worker"]
+    assert data.days == [0, 1]
+    assert data.shifts == ["day"]
+    assert result.metrics.status == "OPTIMAL"
+    assert result.objective_breakdown.total_shortage == 0
+
+    rows = list(csv.DictReader(roster_csv.open()))
+    assert len(rows) == 2
+    assert {row["employee_name"] for row in rows} == {"Alice", "Bob"}
+    assert all(row["shift"] == "day" for row in rows)
+    assert all(row["shortage_count"] == "0" for row in rows)
+
+
+def test_cli_solves_from_three_csv_files_and_writes_roster(tmp_path: Path) -> None:
+    employees_csv, shifts_csv, demand_csv = _write_csv_fixture(tmp_path)
+    roster_csv = tmp_path / "roster.csv"
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        [os.getcwd(), env.get("PYTHONPATH", "")]
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "workforce_scheduling.cli",
+            "--employees-csv",
+            str(employees_csv),
+            "--shifts-csv",
+            str(shifts_csv),
+            "--demand-csv",
+            str(demand_csv),
+            "--roster-csv",
+            str(roster_csv),
+            "--time-limit",
+            "5",
+            "--seed",
+            "1",
+        ],
+        cwd=os.getcwd(),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "CSV roster written to:" in completed.stdout
+    rows = list(csv.DictReader(roster_csv.open()))
+    assert len(rows) == 2

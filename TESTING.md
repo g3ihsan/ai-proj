@@ -23,6 +23,21 @@ valid request for contract tests.
 JSON solve options are bounded at the schema boundary: `0 < time_limit_sec <= 30`,
 `seed` must be a JSON integer, and `use_warm_start` must be a boolean.
 
+Run a three-file CSV solve:
+
+```bash
+PYTHONPATH=. python -m workforce_scheduling.cli --employees-csv employees.csv --shifts-csv shifts.csv --demand-csv demand.csv --roster-csv roster.csv
+```
+
+CSV contract:
+
+- `employees.csv`: `employee_id,name,roles,hourly_cost,max_weekly_hours,availability`
+- `shifts.csv`: `shift,start_hour,end_hour`
+- `demand.csv`: `day,shift,role,required`
+
+Use `|` between multiple employee roles. The `availability` field uses `;`
+between day rows and `|` between shift values, for example `1|0;1|1`.
+
 Run the thin HTTP wrapper locally:
 
 ```bash

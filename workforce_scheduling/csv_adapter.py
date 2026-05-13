@@ -1,0 +1,364 @@
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+from typing import Dict, Iterable, List, Mapping, Tuple
+
+from .data import Employee, ProblemData, validate_problem_data
+from .solve import Assignment
+
+
+DEFAULT_MIN_REST_HOURS = 8
+DEFAULT_MAX_CONSECUTIVE_DAYS = 5
+DEFAULT_SHORTAGE_PENALTY = 1000
+
+
+class CsvAdapterError(ValueError):
+    pass
+
+
+def problem_data_from_csv_files(
+    employees_csv: str | Path,
+    shifts_csv: str | Path,
+    demand_csv: str | Path,
+) -> ProblemData:
+    shift_records = _read_records(shifts_csv, "shifts")
+    demand_records = _read_records(demand_csv, "demand")
+
+    shifts, shift_start_hours, shift_end_hours = _parse_shifts(shift_records)
+    shift_indices = {shift: idx for idx, shift in enumerate(shifts)}
+    demand, days, demand_roles = _parse_demand(
+        demand_records,
+        shift_indices,
+        len(shifts),
+    )
+
+    employees = _parse_employees(
+        _read_records(employees_csv, "employees"),
+        num_days=len(days),
+        num_shifts=len(shifts),
+    )
+    roles = _ordered_unique(
+        role
+        for role in [
+            *demand_roles,
+            *(role for employee in employees for role in employee.roles),
+        ]
+    )
+    _ensure_all_roles_present(demand, days, len(shifts), roles)
+
+    first_shift_record = shift_records[0]
+    data = ProblemData(
+        employees=employees,
+        roles=roles,
+        days=days,
+        shifts=shifts,
+        shift_start_hours=shift_start_hours,
+        shift_end_hours=shift_end_hours,
+        min_rest_hours=_optional_int(
+            first_shift_record,
+            "min_rest_hours",
+            DEFAULT_MIN_REST_HOURS,
+        ),
+        max_consecutive_days=_optional_int(
+            first_shift_record,
+            "max_consecutive_days",
+            DEFAULT_MAX_CONSECUTIVE_DAYS,
+        ),
+        shortage_penalty=_optional_int(
+            first_shift_record,
+            "shortage_penalty",
+            DEFAULT_SHORTAGE_PENALTY,
+        ),
+        demand=demand,
+        hint_assignments={},
+    )
+    errors = validate_problem_data(data)
+    if errors:
+        raise CsvAdapterError("; ".join(errors))
+    return data
+
+
+def write_roster_solution_csv(
+    path: str | Path,
+    data: ProblemData,
+    assignments: List[Assignment],
+    shortages: Dict[Tuple[int, int, str], int],
+) -> None:
+    employee_names = {employee.employee_id: employee.name for employee in data.employees}
+    employee_costs = {
+        employee.employee_id: employee.hourly_cost
+        for employee in data.employees
+    }
+
+    with open(path, "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "day",
+                "shift",
+                "role",
+                "employee_id",
+                "employee_name",
+                "hourly_cost",
+                "shortage_count",
+            ]
+        )
+        for assignment in sorted(
+            assignments,
+            key=lambda item: (item.day, item.shift, item.role, item.employee_id),
+        ):
+            writer.writerow(
+                [
+                    assignment.day,
+                    data.shifts[assignment.shift],
+                    assignment.role,
+                    assignment.employee_id,
+                    employee_names[assignment.employee_id],
+                    employee_costs[assignment.employee_id],
+                    0,
+                ]
+            )
+        for (day, shift, role), shortage_count in sorted(shortages.items()):
+            if shortage_count <= 0:
+                continue
+            writer.writerow(
+                [
+                    day,
+                    data.shifts[shift],
+                    role,
+                    "",
+                    "",
+                    "",
+                    shortage_count,
+                ]
+            )
+
+
+def _read_records(path: str | Path, label: str) -> List[Mapping[str, str]]:
+    with open(path, newline="") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise CsvAdapterError(f"{label}.csv must contain a header row")
+        records = [dict(row) for row in reader]
+    if not records:
+        raise CsvAdapterError(f"{label}.csv must contain at least one row")
+    return records
+
+
+def _parse_shifts(
+    records: List[Mapping[str, str]],
+) -> Tuple[List[str], List[int], List[int]]:
+    shifts: List[str] = []
+    starts: List[int] = []
+    ends: List[int] = []
+    seen: set[str] = set()
+    for row_number, record in enumerate(records, start=2):
+        shift = _required(record, "shift", "shifts", row_number)
+        if shift in seen:
+            raise CsvAdapterError(f"Duplicate shift {shift}")
+        seen.add(shift)
+        shifts.append(shift)
+        starts.append(_required_int(record, "start_hour", "shifts", row_number))
+        ends.append(_required_int(record, "end_hour", "shifts", row_number))
+    return shifts, starts, ends
+
+
+def _parse_demand(
+    records: List[Mapping[str, str]],
+    shift_indices: Dict[str, int],
+    num_shifts: int,
+) -> Tuple[Dict[int, Dict[int, Dict[str, int]]], List[int], List[str]]:
+    max_day = -1
+    parsed_records: List[Tuple[int, int, str, int]] = []
+    roles: List[str] = []
+    seen: set[Tuple[int, int, str]] = set()
+    for row_number, record in enumerate(records, start=2):
+        day = _required_int(record, "day", "demand", row_number)
+        if day < 0:
+            raise CsvAdapterError(f"demand row {row_number} day must be non-negative")
+        shift = _parse_shift_reference(
+            _required(record, "shift", "demand", row_number),
+            shift_indices,
+        )
+        role = _required(record, "role", "demand", row_number)
+        required = _required_int(record, "required", "demand", row_number)
+        if required < 0:
+            raise CsvAdapterError(
+                f"demand row {row_number} required must be non-negative"
+            )
+        key = (day, shift, role)
+        if key in seen:
+            raise CsvAdapterError(f"Duplicate demand record {key}")
+        seen.add(key)
+        parsed_records.append((day, shift, role, required))
+        roles.append(role)
+        max_day = max(max_day, day)
+
+    if max_day < 0:
+        raise CsvAdapterError("demand.csv must contain at least one day")
+    days = list(range(max_day + 1))
+    demand = {
+        day: {shift: {} for shift in range(num_shifts)}
+        for day in days
+    }
+    for day, shift, role, required in parsed_records:
+        demand[day][shift][role] = required
+    return demand, days, _ordered_unique(roles)
+
+
+def _parse_employees(
+    records: List[Mapping[str, str]],
+    num_days: int,
+    num_shifts: int,
+) -> List[Employee]:
+    employees: List[Employee] = []
+    seen: set[int] = set()
+    for row_number, record in enumerate(records, start=2):
+        employee_id = _required_int(record, "employee_id", "employees", row_number)
+        if employee_id in seen:
+            raise CsvAdapterError(f"Duplicate employee_id {employee_id}")
+        seen.add(employee_id)
+        roles = tuple(_split_pipe(_required(record, "roles", "employees", row_number)))
+        if not roles:
+            raise CsvAdapterError(f"employees row {row_number} roles must not be empty")
+        employees.append(
+            Employee(
+                employee_id=employee_id,
+                name=_required(record, "name", "employees", row_number),
+                roles=roles,
+                hourly_cost=_required_int(
+                    record,
+                    "hourly_cost",
+                    "employees",
+                    row_number,
+                ),
+                max_weekly_hours=_required_int(
+                    record,
+                    "max_weekly_hours",
+                    "employees",
+                    row_number,
+                ),
+                availability=_parse_availability(
+                    _required(record, "availability", "employees", row_number),
+                    num_days,
+                    num_shifts,
+                    row_number,
+                ),
+            )
+        )
+    return employees
+
+
+def _parse_availability(
+    value: str,
+    num_days: int,
+    num_shifts: int,
+    row_number: int,
+) -> List[List[bool]]:
+    rows = value.split(";")
+    if len(rows) != num_days:
+        raise CsvAdapterError(
+            f"employees row {row_number} availability must contain {num_days} day rows"
+        )
+    availability: List[List[bool]] = []
+    for day, row in enumerate(rows):
+        cells = row.split("|")
+        if len(cells) != num_shifts:
+            raise CsvAdapterError(
+                f"employees row {row_number} availability day {day} "
+                f"must contain {num_shifts} shift values"
+            )
+        availability.append([_parse_bool(cell, row_number) for cell in cells])
+    return availability
+
+
+def _ensure_all_roles_present(
+    demand: Dict[int, Dict[int, Dict[str, int]]],
+    days: List[int],
+    num_shifts: int,
+    roles: List[str],
+) -> None:
+    for day in days:
+        for shift in range(num_shifts):
+            for role in roles:
+                demand[day][shift].setdefault(role, 0)
+
+
+def _parse_shift_reference(value: str, shift_indices: Dict[str, int]) -> int:
+    if value in shift_indices:
+        return shift_indices[value]
+    try:
+        shift = int(value)
+    except ValueError as exc:
+        raise CsvAdapterError(f"Unknown shift {value}") from exc
+    if shift < 0 or shift >= len(shift_indices):
+        raise CsvAdapterError(f"Unknown shift {value}")
+    return shift
+
+
+def _parse_bool(value: str, row_number: int) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y"}:
+        return True
+    if normalized in {"0", "false", "no", "n"}:
+        return False
+    raise CsvAdapterError(
+        f"employees row {row_number} availability values must be booleans"
+    )
+
+
+def _split_pipe(value: str) -> List[str]:
+    return [item.strip() for item in value.split("|") if item.strip()]
+
+
+def _ordered_unique(values: Iterable[str]) -> List[str]:
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
+def _required(
+    record: Mapping[str, str],
+    field: str,
+    file_label: str,
+    row_number: int,
+) -> str:
+    value = record.get(field)
+    if value is None or value.strip() == "":
+        raise CsvAdapterError(f"{file_label} row {row_number} missing {field}")
+    return value.strip()
+
+
+def _required_int(
+    record: Mapping[str, str],
+    field: str,
+    file_label: str,
+    row_number: int,
+) -> int:
+    value = _required(record, field, file_label, row_number)
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise CsvAdapterError(
+            f"{file_label} row {row_number} {field} must be an integer"
+        ) from exc
+
+
+def _optional_int(
+    record: Mapping[str, str],
+    field: str,
+    default: int,
+) -> int:
+    value = record.get(field)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise CsvAdapterError(f"shifts {field} must be an integer") from exc
