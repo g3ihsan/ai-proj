@@ -9,10 +9,13 @@ from pathlib import Path
 from workforce_scheduling.csv_adapter import (
     CsvAdapterError,
     ROSTER_OUTPUT_HEADER,
+    csv_rows_from_solve_response,
     payload_from_csv_files,
     problem_data_from_csv_files,
     write_roster_solution_csv,
+    write_solve_response_csv,
 )
+from workforce_scheduling.schemas import solve_payload
 from workforce_scheduling.solve import solve
 
 
@@ -141,8 +144,10 @@ def test_cli_solves_from_three_csv_files_and_writes_roster(tmp_path: Path) -> No
     assert completed.returncode == 0, completed.stderr
     assert "CSV roster written to:" in completed.stdout
     rows = list(csv.DictReader(roster_csv.open()))
-    assert len(rows) == 4
+    assert len(rows) == 5
     assert list(rows[0].keys()) == ROSTER_OUTPUT_HEADER
+    assert rows[0]["record_type"] == "summary"
+    assert rows[0]["status"] == "OPTIMAL"
 
 
 def test_checked_in_csv_examples_parse_and_solve(tmp_path: Path) -> None:
@@ -279,6 +284,121 @@ def test_csv_adapter_payload_uses_explicit_solver_settings(
         "seed": 7,
         "use_warm_start": True,
     }
+
+
+def test_csv_rows_from_solve_response_include_summary_and_names(
+    tmp_path: Path,
+) -> None:
+    employees_csv, shifts_csv, demand_csv = _write_csv_fixture(tmp_path)
+    response_payload = solve_payload(
+        payload_from_csv_files(
+            employees_csv,
+            shifts_csv,
+            demand_csv,
+            min_rest_hours=8,
+            max_consecutive_days=5,
+            shortage_penalty=1000,
+            time_limit_sec=5.0,
+            seed=1,
+            use_warm_start=False,
+        )
+    )
+
+    rows = csv_rows_from_solve_response(
+        response_payload,
+        employee_names={0: "Asha", 1: "Ravi", 2: "Meera"},
+        shift_names={0: "morning", 1: "evening"},
+    )
+
+    assert response_payload["ok"] is True
+    assert rows[0]["record_type"] == "summary"
+    assert rows[0]["status"] == "OPTIMAL"
+    assert rows[0]["message"] == "Solver status and objective value"
+    assignment_rows = [
+        row for row in rows if row["record_type"] == "assignment"
+    ]
+    assert len(assignment_rows) == 4
+    assert {row["name"] for row in assignment_rows} <= {
+        "Asha",
+        "Ravi",
+        "Meera",
+    }
+    assert {row["shift_name"] for row in assignment_rows} <= {
+        "morning",
+        "evening",
+    }
+
+
+def test_write_solve_response_csv_writes_error_rows(tmp_path: Path) -> None:
+    output_csv = tmp_path / "response.csv"
+    write_solve_response_csv(
+        {
+            "ok": False,
+            "error": {
+                "type": "SchemaValidationError",
+                "message": "bad request",
+            },
+        },
+        output_csv,
+    )
+
+    rows = list(csv.DictReader(output_csv.open()))
+    assert list(rows[0].keys()) == ROSTER_OUTPUT_HEADER
+    assert rows == [
+        {
+            "record_type": "error",
+            "employee_id": "",
+            "name": "",
+            "day": "",
+            "shift": "",
+            "shift_name": "",
+            "role": "",
+            "status": "SchemaValidationError",
+            "value": "",
+            "message": "bad request",
+        }
+    ]
+
+
+def test_csv_rows_from_solve_response_include_validation_rows() -> None:
+    rows = csv_rows_from_solve_response(
+        {
+            "ok": True,
+            "result": {
+                "metrics": {"status": "OPTIMAL", "objective_value": 0.0},
+                "assignments": [],
+                "shortages": [],
+                "violations": ["Employee 1 exceeds weekly hours"],
+            },
+        }
+    )
+
+    assert rows == [
+        {
+            "record_type": "summary",
+            "employee_id": "",
+            "name": "",
+            "day": "",
+            "shift": "",
+            "shift_name": "",
+            "role": "",
+            "status": "OPTIMAL",
+            "value": 0.0,
+            "message": "Solver status and objective value",
+        },
+        {
+            "record_type": "validation",
+            "employee_id": "",
+            "name": "",
+            "day": "",
+            "shift": "",
+            "shift_name": "",
+            "role": "",
+            "status": "violation",
+            "value": "",
+            "message": "Employee 1 exceeds weekly hours",
+        },
+    ]
 
 
 def test_csv_adapter_ignores_legacy_global_settings_in_shifts_csv(

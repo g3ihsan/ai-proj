@@ -117,46 +117,182 @@ def write_roster_solution_csv(
     assignments: List[Assignment],
     shortages: Dict[Tuple[int, int, str], int],
 ) -> None:
-    employee_names = {employee.employee_id: employee.name for employee in data.employees}
+    response_payload = {
+        "ok": True,
+        "result": {
+            "assignments": [
+                {
+                    "employee_id": assignment.employee_id,
+                    "day": assignment.day,
+                    "shift": assignment.shift,
+                    "role": assignment.role,
+                }
+                for assignment in assignments
+            ],
+            "shortages": [
+                {
+                    "day": day,
+                    "shift": shift,
+                    "role": role,
+                    "shortage_count": shortage_count,
+                }
+                for (day, shift, role), shortage_count in shortages.items()
+            ],
+            "violations": [],
+        },
+    }
+    write_solve_response_csv(
+        response_payload,
+        path,
+        employee_names={
+            employee.employee_id: employee.name
+            for employee in data.employees
+        },
+        shift_names={shift: name for shift, name in enumerate(data.shifts)},
+    )
 
+
+def csv_rows_from_solve_response(
+    response_payload: dict,
+    employee_names: dict[int, str] | None = None,
+    shift_names: dict[int, str] | None = None,
+) -> list[dict]:
+    employee_names = employee_names or {}
+    shift_names = shift_names or {}
+    rows: list[dict] = []
+
+    if not response_payload.get("ok", False):
+        error = response_payload.get("error", {})
+        rows.append(
+            _csv_row(
+                record_type="error",
+                status=str(error.get("type", "error")),
+                message=str(error.get("message", "")),
+            )
+        )
+        return rows
+
+    result = response_payload.get("result", {})
+    metrics = result.get("metrics", {})
+    if metrics:
+        rows.append(
+            _csv_row(
+                record_type="summary",
+                status=str(metrics.get("status", "")),
+                value=_csv_value(metrics.get("objective_value")),
+                message="Solver status and objective value",
+            )
+        )
+
+    for assignment in sorted(
+        result.get("assignments", []),
+        key=lambda item: (
+            int(item["day"]),
+            int(item["shift"]),
+            str(item["role"]),
+            int(item["employee_id"]),
+        ),
+    ):
+        employee_id = int(assignment["employee_id"])
+        shift = int(assignment["shift"])
+        rows.append(
+            _csv_row(
+                record_type="assignment",
+                employee_id=employee_id,
+                name=employee_names.get(employee_id, ""),
+                day=int(assignment["day"]),
+                shift=shift,
+                shift_name=shift_names.get(shift, ""),
+                role=str(assignment["role"]),
+                status="assigned",
+                value=1,
+            )
+        )
+
+    for shortage in sorted(
+        result.get("shortages", []),
+        key=lambda item: (
+            int(item["day"]),
+            int(item["shift"]),
+            str(item["role"]),
+        ),
+    ):
+        shortage_count = int(shortage["shortage_count"])
+        if shortage_count <= 0:
+            continue
+        shift = int(shortage["shift"])
+        role = str(shortage["role"])
+        rows.append(
+            _csv_row(
+                record_type="shortage",
+                day=int(shortage["day"]),
+                shift=shift,
+                shift_name=shift_names.get(shift, ""),
+                role=role,
+                status="unfilled",
+                value=shortage_count,
+                message=f"Unfilled demand for {shortage_count} {role} slot(s)",
+            )
+        )
+
+    for violation in result.get("violations", []):
+        rows.append(
+            _csv_row(
+                record_type="validation",
+                status="violation",
+                message=str(violation),
+            )
+        )
+
+    return rows
+
+
+def write_solve_response_csv(
+    response_payload: dict,
+    path: str | Path,
+    employee_names: dict[int, str] | None = None,
+    shift_names: dict[int, str] | None = None,
+) -> None:
+    rows = csv_rows_from_solve_response(
+        response_payload,
+        employee_names=employee_names,
+        shift_names=shift_names,
+    )
     with open(path, "w", newline="") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(ROSTER_OUTPUT_HEADER)
-        for assignment in sorted(
-            assignments,
-            key=lambda item: (item.day, item.shift, item.role, item.employee_id),
-        ):
-            writer.writerow(
-                [
-                    "assignment",
-                    assignment.employee_id,
-                    employee_names[assignment.employee_id],
-                    assignment.day,
-                    assignment.shift,
-                    data.shifts[assignment.shift],
-                    assignment.role,
-                    "assigned",
-                    1,
-                    "",
-                ]
-            )
-        for (day, shift, role), shortage_count in sorted(shortages.items()):
-            if shortage_count <= 0:
-                continue
-            writer.writerow(
-                [
-                    "shortage",
-                    "",
-                    "",
-                    day,
-                    shift,
-                    data.shifts[shift],
-                    role,
-                    "unfilled",
-                    shortage_count,
-                    f"Unfilled demand for {shortage_count} {role} slot(s)",
-                ]
-            )
+        writer = csv.DictWriter(handle, fieldnames=ROSTER_OUTPUT_HEADER)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _csv_row(
+    *,
+    record_type: str,
+    employee_id: int | str = "",
+    name: str = "",
+    day: int | str = "",
+    shift: int | str = "",
+    shift_name: str = "",
+    role: str = "",
+    status: str = "",
+    value: int | float | str = "",
+    message: str = "",
+) -> Dict[str, Any]:
+    return {
+        "record_type": record_type,
+        "employee_id": employee_id,
+        "name": name,
+        "day": day,
+        "shift": shift,
+        "shift_name": shift_name,
+        "role": role,
+        "status": status,
+        "value": value,
+        "message": message,
+    }
+
+
+def _csv_value(value: Any) -> int | float | str:
+    return "" if value is None else value
 
 
 def _read_records(path: str | Path, label: str) -> List[Mapping[str, str]]:

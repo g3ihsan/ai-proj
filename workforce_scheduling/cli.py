@@ -10,12 +10,12 @@ from .csv_adapter import (
     DEFAULT_MIN_REST_HOURS,
     DEFAULT_SHORTAGE_PENALTY,
     payload_from_csv_files,
-    write_roster_solution_csv,
+    write_solve_response_csv,
 )
 from .data import generate_synthetic_data
 from .output import format_roster_text, write_roster_csv
 from .schemas import error_payload, parse_solve_request, solve_payload
-from .solve import Assignment, solve
+from .solve import solve
 
 
 def parse_args() -> argparse.Namespace:
@@ -164,11 +164,17 @@ def main() -> int:
             for violation in result_payload["violations"]:
                 print(f"  - {violation}")
             return 2
-        write_roster_solution_csv(
+        write_solve_response_csv(
+            response_payload,
             args.roster_csv,
-            data,
-            _assignments_from_payload(result_payload),
-            _shortages_from_payload(result_payload),
+            employee_names={
+                employee.employee_id: employee.name
+                for employee in data.employees
+            },
+            shift_names={
+                shift: shift_name
+                for shift, shift_name in enumerate(data.shifts)
+            },
         )
         print(f"CSV roster written to: {args.roster_csv}")
         return 0
@@ -222,25 +228,6 @@ def _print_metrics_payload(result_payload) -> None:
     print(f"  branches: {metrics['num_branches']}")
     print(f"  variables: {metrics['num_variables']}")
     print(f"  constraints: {metrics['num_constraints']}")
-
-
-def _assignments_from_payload(result_payload) -> list[Assignment]:
-    return [
-        Assignment(
-            employee_id=record["employee_id"],
-            day=record["day"],
-            shift=record["shift"],
-            role=record["role"],
-        )
-        for record in result_payload["assignments"]
-    ]
-
-
-def _shortages_from_payload(result_payload) -> dict[tuple[int, int, str], int]:
-    return {
-        (record["day"], record["shift"], record["role"]): record["shortage_count"]
-        for record in result_payload["shortages"]
-    }
 
 
 if __name__ == "__main__":

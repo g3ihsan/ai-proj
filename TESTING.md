@@ -55,7 +55,11 @@ record_type,employee_id,name,day,shift,shift_name,role,status,value,message
 
 Assignment rows use `record_type=assignment`, `status=assigned`, and
 `value=1`. Shortage rows use `record_type=shortage`, `status=unfilled`, and
-`value` equal to the unfilled count.
+`value` equal to the unfilled count. CSV generated from a full
+`solve_payload(...)` response also includes a `record_type=summary` row with
+solver status/objective information, and can include `record_type=validation`
+or `record_type=error` rows when the response contains validation violations or
+an error envelope.
 
 Run the thin HTTP wrapper locally:
 
