@@ -588,6 +588,82 @@ Assistant recommendation answers summarize this deterministic recommendation
 payload and include the first grounded manager next-check from the best returned
 recommendation.
 
+### `POST /csv/mapping/suggest`
+
+Returns deterministic CSV header mapping suggestions before canonical CSV
+validation. This endpoint does not parse row data, mutate uploads, run the
+solver, call an external LLM/API, or replace `POST /solve-csv`.
+
+Request:
+
+```json
+{
+  "employee_headers": [
+    "Employee Number",
+    "Resource Name",
+    "Job Title",
+    "Cost Per Hour",
+    "Weekly Max Hours",
+    "Avail D0 S0"
+  ],
+  "demand_headers": [
+    "Weekday",
+    "Time Slot",
+    "Coverage Role",
+    "Workers Needed"
+  ],
+  "shift_headers": [
+    "Shift Number",
+    "Period Name",
+    "From Hour",
+    "To Hour"
+  ]
+}
+```
+
+At least one of `employee_headers`, `demand_headers`, or `shift_headers` must
+be provided. Each present value must be a non-empty list of unique headers after
+normalization.
+
+Response:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "type": "csv_mapping_report",
+    "csv_mapping_contract_version": 1,
+    "status": "complete",
+    "uses_external_llm": false,
+    "files": {
+      "employees": {
+        "type": "csv_column_mapping",
+        "csv_type": "employees",
+        "valid": true,
+        "mapping": {
+          "employee_id": {
+            "status": "mapped",
+            "source_header": "Employee Number",
+            "normalized_header": "employee_number",
+            "confidence": 0.95
+          }
+        },
+        "missing_fields": [],
+        "unmapped_headers": [],
+        "warnings": [],
+        "uses_external_llm": false
+      }
+    }
+  }
+}
+```
+
+If any file is incomplete, the endpoint still returns HTTP 200 with
+`status=needs_review` and per-file `missing_fields`. Invalid request shape,
+empty header lists, duplicate normalized headers, or non-string headers return
+HTTP 400 with `CsvMappingValidationError` or `CsvMappingError`. Oversized JSON
+requests return HTTP 413.
+
 ### `POST /solve-csv`
 
 Accepts three uploaded CSV files, solves through the same canonical JSON

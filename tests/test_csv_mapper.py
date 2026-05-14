@@ -59,6 +59,29 @@ def test_employee_mapper_suggests_common_messy_columns() -> None:
     json.dumps(report, sort_keys=True)
 
 
+def test_employee_mapper_supports_additional_header_variants() -> None:
+    report = suggest_employee_column_mapping(
+        [
+            "Employee Number",
+            "Resource Name",
+            "Job Title",
+            "Cost Per Hour",
+            "Weekly Max Hours",
+            "Avail D0 S0",
+        ]
+    )
+
+    assert report["valid"] is True
+    assert report["mapping"]["employee_id"]["source_header"] == "Employee Number"
+    assert report["mapping"]["name"]["source_header"] == "Resource Name"
+    assert report["mapping"]["roles"]["source_header"] == "Job Title"
+    assert report["mapping"]["hourly_cost"]["source_header"] == "Cost Per Hour"
+    assert report["mapping"]["max_weekly_hours"]["source_header"] == (
+        "Weekly Max Hours"
+    )
+    assert report["mapping"]["availability"]["source_headers"] == ["Avail D0 S0"]
+
+
 def test_employee_mapper_supports_compact_availability_with_warning() -> None:
     report = suggest_employee_column_mapping(
         [
@@ -90,6 +113,18 @@ def test_demand_mapper_suggests_common_messy_columns() -> None:
     assert report["mapping"]["required"]["source_header"] == "Headcount"
 
 
+def test_demand_mapper_supports_additional_header_variants() -> None:
+    report = suggest_demand_column_mapping(
+        ["Weekday", "Time Slot", "Coverage Role", "Workers Needed"]
+    )
+
+    assert report["valid"] is True
+    assert report["mapping"]["day"]["source_header"] == "Weekday"
+    assert report["mapping"]["shift"]["source_header"] == "Time Slot"
+    assert report["mapping"]["role"]["source_header"] == "Coverage Role"
+    assert report["mapping"]["required"]["source_header"] == "Workers Needed"
+
+
 def test_shift_mapper_suggests_common_messy_columns_without_colliding_name() -> None:
     report = suggest_shift_column_mapping(
         ["Shift ID", "Shift Label", "Start Time", "End Time"]
@@ -100,6 +135,18 @@ def test_shift_mapper_suggests_common_messy_columns_without_colliding_name() -> 
     assert report["mapping"]["shift_name"]["source_header"] == "Shift Label"
     assert report["mapping"]["start_hour"]["source_header"] == "Start Time"
     assert report["mapping"]["end_hour"]["source_header"] == "End Time"
+
+
+def test_shift_mapper_supports_additional_header_variants() -> None:
+    report = suggest_shift_column_mapping(
+        ["Shift Number", "Period Name", "From Hour", "To Hour"]
+    )
+
+    assert report["valid"] is True
+    assert report["mapping"]["shift"]["source_header"] == "Shift Number"
+    assert report["mapping"]["shift_name"]["source_header"] == "Period Name"
+    assert report["mapping"]["start_hour"]["source_header"] == "From Hour"
+    assert report["mapping"]["end_hour"]["source_header"] == "To Hour"
 
 
 def test_mapper_reports_missing_fields_for_review() -> None:

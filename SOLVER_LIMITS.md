@@ -56,6 +56,8 @@ The deterministic CSV mapper is a pre-validation reporting layer only. It can
 suggest mappings from messy headers to canonical employee, shift, and demand
 fields, but it does not parse rows, infer staffing demand, mutate files, call an
 external LLM/API, or bypass `csv_adapter.py` validation.
+`POST /csv/mapping/suggest` exposes only that deterministic report; it does not
+run the solver or change `/solve-csv` behavior.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.
@@ -184,7 +186,7 @@ preserves the same solved roster and objective values.
 `workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
 It exposes `GET /health`, `GET /metadata`, `POST /solve`, deterministic
 `POST /explain/*` endpoints, `POST /explain/narrate`, `POST /assistant/ask`,
-`POST /solve-csv`, `POST /solve-jobs`,
+`POST /csv/mapping/suggest`, `POST /solve-csv`, `POST /solve-jobs`,
 `GET /solve-jobs/{job_id}`, and the static `GET /viewer/` roster viewer. The
 explanation endpoints format existing Solver Evidence Layer fields into
 manager-readable JSON payloads. They are not LLM endpoints and do not generate

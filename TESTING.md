@@ -62,6 +62,10 @@ reports confidence, missing fields, unmapped headers, warnings, and
 `uses_external_llm=false`. It does not replace `csv_adapter.py`; tests assert it
 only produces mapping reports and validation errors before canonical CSV
 parsing.
+`POST /csv/mapping/suggest` exposes that same mapper through the API. It accepts
+JSON header arrays, returns `complete` or `needs_review` reports without
+solving, rejects invalid header shapes with HTTP 400, and preserves the normal
+JSON request-size limit.
 
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:
@@ -114,6 +118,7 @@ HTTP endpoints:
 - `POST /assistant/ask`
 - `POST /recommendations`
 - `POST /recommend/what-if`
+- `POST /csv/mapping/suggest`
 - `POST /solve-csv`
 - `POST /solve-jobs`
 - `GET /solve-jobs/{job_id}`

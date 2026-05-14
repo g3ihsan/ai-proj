@@ -327,6 +327,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "assistant_ask": "POST /assistant/ask",
             "recommendations": "POST /recommendations",
             "recommend_what_if": "POST /recommend/what-if",
+            "csv_mapping_suggest": "POST /csv/mapping/suggest",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -340,6 +341,12 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
         "csv_upload": {
             "file_fields": ["employees_csv", "shifts_csv", "demand_csv"],
             "response_media_type": "text/csv",
+        },
+        "csv_mapper": {
+            "source": "Deterministic CSV header mapping suggestions",
+            "csv_mapping_contract_version": 1,
+            "uses_external_llm": False,
+            "response_shape": {"ok": True, "result": "CSV mapping report"},
         },
         "solve_options": {
             "time_limit_sec": {
@@ -472,6 +479,145 @@ def test_api_serves_static_roster_viewer() -> None:
     assert ".helper-text" in styles_response.text
     assert ".compact-field" in styles_response.text
     assert ".status-dot.busy" in styles_response.text
+
+
+def test_api_csv_mapping_suggest_returns_deterministic_report() -> None:
+    payload = {
+        "employee_headers": [
+            "Employee Number",
+            "Resource Name",
+            "Job Title",
+            "Cost Per Hour",
+            "Weekly Max Hours",
+            "Avail D0 S0",
+        ],
+        "demand_headers": [
+            "Weekday",
+            "Time Slot",
+            "Coverage Role",
+            "Workers Needed",
+        ],
+        "shift_headers": ["Shift Number", "Period Name", "From Hour", "To Hour"],
+    }
+
+    first = _api_request(
+        "POST",
+        "/csv/mapping/suggest",
+        json_payload=payload,
+    )
+    second = _api_request(
+        "POST",
+        "/csv/mapping/suggest",
+        json_payload=payload,
+    )
+    response_payload = first.json()
+    result_payload = response_payload["result"]
+
+    assert first.status_code == 200
+    assert first.headers["x-request-id"]
+    assert response_payload["ok"] is True
+    assert first.json() == second.json()
+    assert result_payload["type"] == "csv_mapping_report"
+    assert result_payload["csv_mapping_contract_version"] == 1
+    assert result_payload["status"] == "complete"
+    assert result_payload["uses_external_llm"] is False
+    assert result_payload["files"]["employees"]["mapping"]["employee_id"][
+        "source_header"
+    ] == "Employee Number"
+    assert result_payload["files"]["employees"]["mapping"]["availability"][
+        "source_headers"
+    ] == ["Avail D0 S0"]
+    assert result_payload["files"]["demand"]["mapping"]["required"][
+        "source_header"
+    ] == "Workers Needed"
+    assert result_payload["files"]["shifts"]["mapping"]["shift_name"][
+        "source_header"
+    ] == "Period Name"
+    json.dumps(response_payload, sort_keys=True)
+
+
+def test_api_csv_mapping_suggest_reports_needs_review_without_solving() -> None:
+    response = _api_request(
+        "POST",
+        "/csv/mapping/suggest",
+        json_payload={
+            "employee_headers": ["Employee Name", "Role"],
+            "demand_headers": ["Day", "Shift", "Role", "Required"],
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["status"] == "needs_review"
+    assert result_payload["files"]["employees"]["valid"] is False
+    assert result_payload["files"]["employees"]["missing_fields"] == [
+        "employee_id",
+        "hourly_cost",
+        "max_weekly_hours",
+        "availability",
+    ]
+    assert "shifts" not in result_payload["files"]
+
+
+@pytest.mark.parametrize(
+    ("json_payload", "error_type", "message"),
+    [
+        ({}, "CsvMappingValidationError", "at least one CSV header list is required"),
+        (
+            {"employee_headers": []},
+            "CsvMappingValidationError",
+            "headers must not be empty",
+        ),
+        (
+            {"employee_headers": ["Employee ID", "employee-id"]},
+            "CsvMappingValidationError",
+            "headers contain duplicate normalized values: employee_id",
+        ),
+        (
+            {"employee_headers": "Employee ID"},
+            "CsvMappingError",
+            "headers must be a sequence of strings",
+        ),
+    ],
+)
+def test_api_csv_mapping_suggest_rejects_invalid_headers(
+    json_payload: Dict[str, object],
+    error_type: str,
+    message: str,
+) -> None:
+    response = _api_request(
+        "POST",
+        "/csv/mapping/suggest",
+        json_payload=json_payload,
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"] == {
+        "type": error_type,
+        "message": message,
+        "request_id": response.headers["x-request-id"],
+    }
+
+
+def test_api_csv_mapping_suggest_rejects_oversized_json() -> None:
+    response = _api_request(
+        "POST",
+        "/csv/mapping/suggest",
+        content=" " * (MAX_JSON_REQUEST_BYTES + 1),
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {
+        "ok": False,
+        "error": {
+            "type": "RequestTooLargeError",
+            "message": f"JSON request body exceeds {MAX_JSON_REQUEST_BYTES} bytes",
+            "request_id": response.headers["x-request-id"],
+        },
+    }
 
 
 def test_api_serves_viewer_example_csv_files() -> None:

@@ -25,6 +25,11 @@ from .csv_adapter import (
     payload_from_csv_files,
     write_solve_response_csv,
 )
+from .csv_mapper import (
+    CSV_MAPPING_CONTRACT_VERSION,
+    CsvMappingValidationError,
+    csv_mapping_report,
+)
 from .explanations import (
     ExplanationQueryError,
     ExplanationTargetNotFoundError,
@@ -171,6 +176,7 @@ async def metadata() -> dict[str, Any]:
             "assistant_ask": "POST /assistant/ask",
             "recommendations": "POST /recommendations",
             "recommend_what_if": "POST /recommend/what-if",
+            "csv_mapping_suggest": "POST /csv/mapping/suggest",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -184,6 +190,12 @@ async def metadata() -> dict[str, Any]:
         "csv_upload": {
             "file_fields": ["employees_csv", "shifts_csv", "demand_csv"],
             "response_media_type": "text/csv",
+        },
+        "csv_mapper": {
+            "source": "Deterministic CSV header mapping suggestions",
+            "csv_mapping_contract_version": CSV_MAPPING_CONTRACT_VERSION,
+            "uses_external_llm": False,
+            "response_shape": {"ok": True, "result": "CSV mapping report"},
         },
         "solve_options": {
             "time_limit_sec": {
@@ -388,6 +400,25 @@ async def recommend_what_if_endpoint(request: Request) -> JSONResponse:
     return await _recommendations_endpoint(request, "recommend_what_if")
 
 
+@app.post("/csv/mapping/suggest")
+async def csv_mapping_suggest_endpoint(request: Request) -> JSONResponse:
+    try:
+        request_payload = await _json_request_payload(request)
+        response_payload = {
+            "ok": True,
+            "result": _csv_mapping_report_from_payload(request_payload),
+        }
+    except Exception as exc:
+        response_payload = _error_payload_for_request(exc, request)
+
+    response_payload = _with_request_id(response_payload, request)
+    status_code = 200 if response_payload["ok"] else 400
+    if _error_type(response_payload) == "RequestTooLargeError":
+        status_code = 413
+    _log_solve_route(request, "csv_mapping_suggest", response_payload, status_code)
+    return JSONResponse(content=response_payload, status_code=status_code)
+
+
 async def _recommendations_endpoint(
     request: Request,
     route_name: str,
@@ -559,6 +590,20 @@ async def _json_request_payload(request: Request) -> Any:
             f"JSON request body exceeds {MAX_JSON_REQUEST_BYTES} bytes"
         )
     return json.loads(body)
+
+
+def _csv_mapping_report_from_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise CsvMappingValidationError("CSV mapping request must be an object")
+    return csv_mapping_report(
+        employee_headers=_optional_header_list(payload, "employee_headers"),
+        demand_headers=_optional_header_list(payload, "demand_headers"),
+        shift_headers=_optional_header_list(payload, "shift_headers"),
+    )
+
+
+def _optional_header_list(payload: dict[str, Any], key: str) -> Any:
+    return payload[key] if key in payload else None
 
 
 def _request_id(request: Request) -> str:
