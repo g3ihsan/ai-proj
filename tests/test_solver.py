@@ -1487,6 +1487,10 @@ def test_assistant_intent_router_extracts_supported_targets() -> None:
         "Are there coverage gaps?",
         solve_request=request_payload,
     )
+    summary = parse_assistant_intent(
+        "Summarize this schedule",
+        solve_request=request_payload,
+    )
 
     assert assignment.kind == "assignment"
     assert assignment.target == {
@@ -1500,6 +1504,8 @@ def test_assistant_intent_router_extracts_supported_targets() -> None:
     assert shift.kind == "shift"
     assert shift.target == {"day": 0, "shift": 0}
     assert shortages.kind == "shortages"
+    assert summary.kind == "summary"
+    assert summary.target == {}
 
 
 def test_assistant_intent_router_returns_unsupported_for_missing_target() -> None:
@@ -1508,6 +1514,15 @@ def test_assistant_intent_router_returns_unsupported_for_missing_target() -> Non
     assert intent.kind == "unsupported"
     assert intent.supported is False
     assert intent.missing_fields == ("employee_id", "day", "shift", "role")
+
+
+def test_assistant_intent_router_returns_unsupported_for_free_form_text() -> None:
+    intent = parse_assistant_intent("Can this tool make coffee?")
+
+    assert intent.kind == "unsupported"
+    assert intent.supported is False
+    assert intent.target == {}
+    assert intent.missing_fields == ()
 
 
 def test_assistant_intent_router_explicit_target_overrides_question_text() -> None:
@@ -1678,6 +1693,27 @@ def test_assistant_response_uses_deterministic_explanation_and_narration() -> No
     assert response["explanation"]["type"] == "summary_explanation"
     assert response["narration"]["source_explanation_type"] == "summary_explanation"
     assert response["provider"]["uses_external_llm"] is False
+
+
+def test_assistant_response_for_unsupported_intent_includes_answer_alias() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    response = assistant_response_from_request(
+        {
+            "question": "Can this tool make coffee?",
+            "solve_request": request_payload,
+        }
+    )
+
+    assert response["type"] == "assistant_response"
+    assert response["status"] == "unsupported"
+    assert response["answer"] == response["message"]
+    assert response["narration"] is None
+    assert response["explanation"] is None
 
 
 def test_explain_assignment_returns_non_assignment_explanation_when_not_assigned() -> None:

@@ -913,6 +913,60 @@ def test_api_assistant_ask_routes_assignment_question() -> None:
     assert result_payload["provider"]["uses_external_llm"] is False
 
 
+def test_api_assistant_ask_routes_shortage_question() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Are there any staffing shortages?",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["intent"]["kind"] == "shortages"
+    assert result_payload["answer"] == result_payload["message"]
+    assert result_payload["explanation"]["type"] == "shortage_explanations"
+    assert "shortages" in result_payload["explanation"]["details"]
+
+
+def test_api_assistant_ask_routes_employee_question() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Explain employee 0",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["intent"]["kind"] == "employee"
+    assert result_payload["intent"]["target"]["employee_id"] == 0
+    assert result_payload["answer"] == result_payload["message"]
+    assert result_payload["explanation"]["type"] == "employee_explanation"
+
+
+def test_api_assistant_ask_routes_shift_question() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Explain day 0 shift 0",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["intent"]["kind"] == "shift"
+    assert result_payload["intent"]["target"] == {"day": 0, "shift": 0}
+    assert result_payload["answer"] == result_payload["message"]
+    assert result_payload["explanation"]["type"] == "shift_explanation"
+
+
 def test_api_assistant_ask_routes_employee_name_match() -> None:
     response = _api_request(
         "POST",
@@ -1008,6 +1062,51 @@ def test_api_assistant_ask_returns_unsupported_when_target_is_missing() -> None:
     assert result_payload["explanation"] is None
 
 
+def test_api_assistant_ask_returns_unsupported_for_unrelated_question() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Can this tool make coffee?",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["status"] == "unsupported"
+    assert result_payload["intent"]["kind"] == "unsupported"
+    assert result_payload["answer"] == result_payload["message"]
+    assert result_payload["narration"] is None
+    assert result_payload["explanation"] is None
+
+
+@pytest.mark.parametrize(
+    "json_payload",
+    [
+        {"solve_request": _small_solve_request()},
+        {"question": "", "solve_request": _small_solve_request()},
+        {"question": "Explain this roster"},
+        {
+            "question": "Explain employee 0",
+            "solve_request": _small_solve_request(),
+            "target": "not-an-object",
+        },
+    ],
+)
+def test_api_assistant_ask_rejects_invalid_request_shape(
+    json_payload: Dict[str, object],
+) -> None:
+    response = _api_request("POST", "/assistant/ask", json_payload=json_payload)
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "AssistantIntentError"
+
+
 def test_api_assistant_ask_preserves_schema_error() -> None:
     response = _api_request(
         "POST",
@@ -1024,6 +1123,57 @@ def test_api_assistant_ask_preserves_schema_error() -> None:
     assert response_payload["error"]["type"] == "SchemaValidationError"
     assert response_payload["error"]["message"] == (
         "Solve request must contain a problem object"
+    )
+
+
+def test_api_assistant_ask_preserves_target_not_found_error() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Why was employee 99 assigned to day 0 shift 0 as worker?",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 404
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ExplanationTargetNotFoundError"
+
+
+def test_api_assistant_ask_is_deterministic_and_json_serializable() -> None:
+    json_payload = {
+        "question": "Explain employee 0",
+        "solve_request": _small_solve_request(),
+    }
+
+    first = _api_request("POST", "/assistant/ask", json_payload=json_payload).json()
+    second = _api_request("POST", "/assistant/ask", json_payload=json_payload).json()
+
+    assert first == second
+    json.dumps(first, sort_keys=True)
+
+
+def test_api_assistant_ask_does_not_change_debug_solve_output() -> None:
+    request_payload = _small_solve_request()
+
+    before = _api_request("POST", "/solve", json_payload=request_payload).json()
+    assistant_response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Explain employee 0",
+            "solve_request": request_payload,
+        },
+    ).json()
+    after = _api_request("POST", "/solve", json_payload=request_payload).json()
+
+    assert before["ok"] is True
+    assert assistant_response["ok"] is True
+    assert after["ok"] is True
+    assert _stable_solve_output(before["result"]) == _stable_solve_output(
+        after["result"]
     )
 
 
