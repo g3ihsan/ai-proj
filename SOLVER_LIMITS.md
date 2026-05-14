@@ -111,11 +111,14 @@ generic narration error. Narration responses built from `solve_request` include
 source metadata with the mode, kind, and normalized target.
 The assistant router in `workforce_scheduling.assistant` is deterministic. It
 routes only supported manager explanation questions to the existing explanation
-and narration helpers. It does not use an LLM for intent detection, does not
-perform fuzzy or substring employee-name matching, and returns an unsupported
-response rather than guessing missing assignment, employee, or shift targets.
-Explicit request targets override text-derived targets to keep caller-provided
-structured intent authoritative.
+and narration helpers, and routes shortage-fix/what-if recommendation questions
+to the deterministic recommendation engine. It does not use an LLM for intent
+detection, does not perform fuzzy or substring employee-name matching, and
+returns an unsupported response rather than guessing missing assignment,
+employee, or shift targets. Recommendation answers summarize the returned
+scenario comparison payload only; they do not invent changes or generate
+rosters. Explicit request targets override text-derived targets to keep
+caller-provided structured intent authoritative.
 The recommendation engine in `workforce_scheduling.recommendations` is also
 deterministic. The current goal is limited to `reduce_shortages`; it evaluates
 small availability-change scenarios for qualified unavailable employees on

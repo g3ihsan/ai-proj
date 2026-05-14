@@ -19,10 +19,21 @@ from .explanations import (
     explain_summary,
     solve_request_to_explanation_payload,
 )
+from .recommendations import (
+    RECOMMENDATION_GOAL_REDUCE_SHORTAGES,
+    recommendation_response_from_request,
+)
 from .schemas import SchemaValidationError
 
 
-SUPPORTED_ASSISTANT_KINDS = ("summary", "shortages", "assignment", "employee", "shift")
+SUPPORTED_ASSISTANT_KINDS = (
+    "summary",
+    "shortages",
+    "assignment",
+    "employee",
+    "shift",
+    "recommendations",
+)
 
 
 class AssistantIntentError(ValueError):
@@ -100,13 +111,18 @@ def assistant_response_from_request(payload: Mapping[str, Any]) -> dict[str, Any
         solve_request=solve_request,
         target_hint=payload.get("target"),
     )
-    provider = narration_provider_from_name(payload.get("provider"))
+    provider = (
+        None
+        if intent.kind == "recommendations"
+        else narration_provider_from_name(payload.get("provider"))
+    )
     return build_assistant_response(
         question=str(question),
         solve_request=solve_request,
         intent=intent,
         target=intent.target,
         provider=provider,
+        recommendation_options=_recommendation_options_from_payload(payload),
     )
 
 
@@ -116,9 +132,18 @@ def build_assistant_response(
     intent: AssistantIntent,
     target: Mapping[str, Any],
     provider: NarrationProvider | None = None,
+    recommendation_options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not intent.supported:
         return _unsupported_response(question, intent)
+
+    if intent.kind == "recommendations":
+        return _recommendation_assistant_response(
+            question,
+            solve_request,
+            intent,
+            recommendation_options,
+        )
 
     explainer, required_target_keys = _explainer_for_kind(intent.kind)
     explanation_response = solve_request_to_explanation_payload(
@@ -237,7 +262,12 @@ def _employee_id_from_exact_name(
 
 
 def _classify_kind(question: str, target: Mapping[str, Any]) -> str:
-    if any(term in question for term in ("shortage", "understaffed", "missing staff", "coverage gap")):
+    if _looks_like_recommendation_question(question):
+        return "recommendations"
+    if any(
+        term in question
+        for term in ("shortage", "understaffed", "missing staff", "coverage gap")
+    ):
         return "shortages"
     if _looks_like_assignment_question(question, target):
         return "assignment"
@@ -258,8 +288,36 @@ def _classify_kind(question: str, target: Mapping[str, Any]) -> str:
     return "unsupported"
 
 
+def _looks_like_recommendation_question(question: str) -> bool:
+    shortage_terms = (
+        "shortage",
+        "understaffed",
+        "missing staff",
+        "coverage gap",
+    )
+    recommendation_terms = (
+        "recommend",
+        "suggest",
+        "what if",
+        "what-if",
+        "fix",
+        "reduce",
+        "improve",
+        "scenario",
+        "change",
+    )
+    return any(term in question for term in shortage_terms) and any(
+        term in question
+        for term in recommendation_terms
+    )
+
+
 def _looks_like_assignment_question(question: str, target: Mapping[str, Any]) -> bool:
-    if "assignment" in question or " assigned" in question or "not assigned" in question:
+    if (
+        "assignment" in question
+        or " assigned" in question
+        or "not assigned" in question
+    ):
         return True
     return {"employee_id", "day", "shift", "role"} <= set(target)
 
@@ -289,6 +347,7 @@ def _required_fields_for_kind(kind: str) -> tuple[str, ...]:
         "assignment": ("employee_id", "day", "shift", "role"),
         "employee": ("employee_id",),
         "shift": ("day", "shift"),
+        "recommendations": (),
     }[kind]
 
 
@@ -299,7 +358,9 @@ def _target_for_kind(kind: str, target: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _explainer_for_kind(kind: str) -> tuple[Callable[..., dict[str, Any]], tuple[str, ...]]:
+def _explainer_for_kind(
+    kind: str,
+) -> tuple[Callable[..., dict[str, Any]], tuple[str, ...]]:
     if kind == "summary":
         return explain_summary, ()
     if kind == "shortages":
@@ -313,6 +374,124 @@ def _explainer_for_kind(kind: str) -> tuple[Callable[..., dict[str, Any]], tuple
     raise AssistantUnsupportedIntentError(f"Unsupported assistant intent {kind}")
 
 
+def _recommendation_assistant_response(
+    question: str,
+    solve_request: Mapping[str, Any],
+    intent: AssistantIntent,
+    recommendation_options: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    recommendation_request: dict[str, Any] = {
+        "goal": RECOMMENDATION_GOAL_REDUCE_SHORTAGES,
+        "solve_request": solve_request,
+    }
+    recommendation_request.update(dict(recommendation_options or {}))
+    recommendation_payload = recommendation_response_from_request(recommendation_request)
+    answer = _recommendation_answer(recommendation_payload)
+    return {
+        "type": "assistant_response",
+        "status": recommendation_payload["status"],
+        "question": question,
+        "message": answer,
+        "answer": answer,
+        "intent": {
+            "kind": intent.kind,
+            "supported": True,
+            "target": {},
+        },
+        "narration": None,
+        "explanation": None,
+        "recommendation": recommendation_payload,
+        "provider": {
+            "name": "deterministic_recommendation_engine",
+            "uses_external_llm": False,
+        },
+        "grounding": {
+            "source": "deterministic_scenario_recommendations",
+            "goal": recommendation_payload["goal"],
+            "recommendation_type": recommendation_payload["recommendation_type"],
+            "recommendation_contract_version": recommendation_payload[
+                "recommendation_contract_version"
+            ],
+            "supported_scenario_types": list(
+                recommendation_payload["metadata"]["supported_scenario_types"]
+            ),
+            "uses_external_llm": recommendation_payload["metadata"][
+                "uses_external_llm"
+            ],
+            "changes_solver_behavior": recommendation_payload["metadata"][
+                "changes_solver_behavior"
+            ],
+        },
+        "reason_codes": [],
+    }
+
+
+def _recommendation_answer(recommendation_payload: Mapping[str, Any]) -> str:
+    summary = _assistant_mapping_field(recommendation_payload, "summary")
+    recommendations = _assistant_list_field(recommendation_payload, "recommendations")
+    baseline_total_shortage = int(summary["baseline_total_shortage"])
+    scenario_count = int(summary["scenario_count"])
+    recommendation_count = int(summary["recommendation_count"])
+
+    if baseline_total_shortage <= 0:
+        return (
+            "The baseline solve has no total shortages, so the deterministic "
+            "recommendation engine found no shortage-reduction recommendation."
+        )
+
+    prefix = (
+        f"The baseline solve has {baseline_total_shortage} total shortage(s). "
+        f"The deterministic recommendation engine evaluated {scenario_count} "
+        f"scenario(s) and found {recommendation_count} shortage-reducing "
+        f"recommendation(s)."
+    )
+    if not recommendations:
+        return (
+            prefix
+            + " No evaluated scenario reduced shortages under the current CP-SAT model."
+        )
+
+    best = _assistant_mapping_field(recommendations[0], "comparison")
+    title = str(recommendations[0]["title"])
+    return (
+        prefix
+        + " Best recommendation: "
+        + title
+        + f"; shortage reduction {int(best['shortage_reduction'])}, "
+        + f"from {int(best['baseline_total_shortage'])} to "
+        + f"{int(best['scenario_total_shortage'])}."
+    )
+
+
+def _assistant_mapping_field(
+    payload: Mapping[str, Any],
+    key: str,
+) -> Mapping[str, Any]:
+    value = payload.get(key)
+    if not isinstance(value, Mapping):
+        raise AssistantIntentError(f"assistant recommendation {key} must be an object")
+    return value
+
+
+def _assistant_list_field(
+    payload: Mapping[str, Any],
+    key: str,
+) -> list[Any]:
+    value = payload.get(key)
+    if not isinstance(value, list):
+        raise AssistantIntentError(f"assistant recommendation {key} must be a list")
+    return value
+
+
+def _recommendation_options_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    if "limits" in payload:
+        options["limits"] = payload["limits"]
+    if "max_scenarios" in payload:
+        options["max_scenarios"] = payload["max_scenarios"]
+    return options
+
+
 def _unsupported_response(question: str, intent: AssistantIntent) -> dict[str, Any]:
     missing = list(intent.missing_fields)
     if missing:
@@ -323,8 +502,9 @@ def _unsupported_response(question: str, intent: AssistantIntent) -> dict[str, A
         )
     else:
         message = (
-            "I can answer summary, shortage, assignment, employee, and shift "
-            "explanation questions when enough target information is provided."
+            "I can answer summary, shortage, assignment, employee, shift "
+            "explanation, and shortage recommendation questions when enough "
+            "target information is provided."
         )
     return {
         "type": "assistant_response",

@@ -1495,6 +1495,10 @@ def test_assistant_intent_router_extracts_supported_targets() -> None:
         "Are there coverage gaps?",
         solve_request=request_payload,
     )
+    recommendations = parse_assistant_intent(
+        "Recommend a what-if scenario to reduce coverage gaps",
+        solve_request=request_payload,
+    )
     summary = parse_assistant_intent(
         "Summarize this schedule",
         solve_request=request_payload,
@@ -1512,6 +1516,8 @@ def test_assistant_intent_router_extracts_supported_targets() -> None:
     assert shift.kind == "shift"
     assert shift.target == {"day": 0, "shift": 0}
     assert shortages.kind == "shortages"
+    assert recommendations.kind == "recommendations"
+    assert recommendations.target == {}
     assert summary.kind == "summary"
     assert summary.target == {}
 
@@ -1722,6 +1728,49 @@ def test_assistant_response_for_unsupported_intent_includes_answer_alias() -> No
     assert response["answer"] == response["message"]
     assert response["narration"] is None
     assert response["explanation"] is None
+
+
+def test_assistant_response_routes_shortage_recommendations_to_engine() -> None:
+    request_payload = solve_request_to_payload(
+        _evidence_blocker_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    response = assistant_response_from_request(
+        {
+            "question": "What if we reduce staffing shortages?",
+            "solve_request": request_payload,
+        }
+    )
+
+    assert response["type"] == "assistant_response"
+    assert response["status"] == "OPTIMAL"
+    assert response["intent"] == {
+        "kind": "recommendations",
+        "supported": True,
+        "target": {},
+    }
+    assert response["answer"] == response["message"]
+    assert response["narration"] is None
+    assert response["explanation"] is None
+    assert response["provider"]["uses_external_llm"] is False
+    assert response["grounding"] == {
+        "source": "deterministic_scenario_recommendations",
+        "goal": "reduce_shortages",
+        "recommendation_type": "what_if",
+        "recommendation_contract_version": 1,
+        "supported_scenario_types": ["set_availability"],
+        "uses_external_llm": False,
+        "changes_solver_behavior": False,
+    }
+    assert response["recommendation"]["type"] == "scenario_recommendations"
+    assert response["recommendation"]["summary"]["recommendation_count"] == 1
+    assert response["recommendation"]["recommendations"][0]["comparison"][
+        "shortage_reduction"
+    ] == 1
+    assert "Best recommendation:" in response["message"]
+    json.dumps(response, sort_keys=True)
 
 
 def test_recommendations_generate_shortage_reduction_scenarios() -> None:

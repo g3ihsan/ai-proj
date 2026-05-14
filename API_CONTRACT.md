@@ -304,10 +304,12 @@ Narration errors preserve the narrowest available error type:
 
 ### `POST /assistant/ask`
 
-The assistant endpoint is a deterministic router for manager explanation
-questions. It does not use an LLM for intent detection. It parses a supported
-question shape, builds the matching deterministic explanation, narrates it with
-the configured narration provider, and returns one grounded assistant response.
+The assistant endpoint is a deterministic router for manager explanation and
+shortage recommendation questions. It does not use an LLM for intent detection.
+For explanation intents, it builds the matching deterministic explanation,
+narrates it with the configured narration provider, and returns one grounded
+assistant response. For recommendation intents, it calls the deterministic
+scenario recommendation engine and summarizes that returned comparison payload.
 
 Request:
 
@@ -336,6 +338,7 @@ Supported routed intents:
 - `assignment`
 - `employee`
 - `shift`
+- `recommendations`
 
 The router extracts only explicit target fields such as `employee 0`, `day 0`,
 `shift 1`, `role worker`, `as worker`, or `for worker`. It may resolve an exact
@@ -345,6 +348,12 @@ substrings inside unrelated words. It does not fuzzy match names. Ambiguous
 duplicate names are rejected.
 When `target` is provided in the request, those explicit target fields override
 any fields parsed from the question text.
+
+Recommendation questions must still be shortage-fix or what-if questions for
+the currently supported `reduce_shortages` goal. They do not generate rosters or
+invent scenario changes; `/assistant/ask` routes them to the same deterministic
+engine used by `POST /recommendations` and returns that payload in
+`recommendation`.
 
 If the question is unsupported or lacks required target fields, the endpoint
 returns `ok=true` with `status=unsupported` and no narration. Request-shape

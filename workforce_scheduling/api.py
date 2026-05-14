@@ -11,7 +11,7 @@ from uuid import uuid4
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
-from .assistant import assistant_response_from_request
+from .assistant import SUPPORTED_ASSISTANT_KINDS, assistant_response_from_request
 from .ai_explanations import (
     ExplanationNarrationError,
     narration_provider_from_name,
@@ -231,13 +231,7 @@ async def metadata() -> dict[str, Any]:
         "assistant_endpoint": {
             "source": "Deterministic explanation and narration helpers",
             "uses_external_llm_by_default": False,
-            "supported_intents": [
-                "summary",
-                "shortages",
-                "assignment",
-                "employee",
-                "shift",
-            ],
+            "supported_intents": list(SUPPORTED_ASSISTANT_KINDS),
             "response_shape": {"ok": True, "result": "Assistant response"},
         },
         "recommendation_engine": {

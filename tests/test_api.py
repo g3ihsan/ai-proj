@@ -306,6 +306,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
                 "assignment",
                 "employee",
                 "shift",
+                "recommendations",
             ],
             "response_shape": {"ok": True, "result": "Assistant response"},
         },
@@ -976,6 +977,53 @@ def test_api_assistant_ask_routes_shortage_question() -> None:
     assert "shortages" in result_payload["explanation"]["details"]
 
 
+def test_api_assistant_ask_routes_recommendation_question() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "What if we want to reduce staffing shortages?",
+            "solve_request": _shortage_reduction_solve_request(),
+        },
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["type"] == "assistant_response"
+    assert result_payload["status"] == "OPTIMAL"
+    assert result_payload["answer"] == result_payload["message"]
+    assert result_payload["intent"] == {
+        "kind": "recommendations",
+        "supported": True,
+        "target": {},
+    }
+    assert result_payload["narration"] is None
+    assert result_payload["explanation"] is None
+    assert result_payload["provider"] == {
+        "name": "deterministic_recommendation_engine",
+        "uses_external_llm": False,
+    }
+    assert result_payload["grounding"] == {
+        "source": "deterministic_scenario_recommendations",
+        "goal": "reduce_shortages",
+        "recommendation_type": "what_if",
+        "recommendation_contract_version": 1,
+        "supported_scenario_types": ["set_availability"],
+        "uses_external_llm": False,
+        "changes_solver_behavior": False,
+    }
+    assert result_payload["recommendation"]["type"] == "scenario_recommendations"
+    assert result_payload["recommendation"]["recommendation_type"] == "what_if"
+    assert result_payload["recommendation"]["summary"]["recommendation_count"] == 1
+    assert result_payload["recommendation"]["recommendations"][0]["comparison"][
+        "shortage_reduction"
+    ] == 1
+    assert "Best recommendation:" in result_payload["message"]
+    json.dumps(response_payload, sort_keys=True)
+
+
 def test_api_assistant_ask_routes_employee_question() -> None:
     response = _api_request(
         "POST",
@@ -1209,6 +1257,28 @@ def test_api_assistant_ask_does_not_change_debug_solve_output() -> None:
         "/assistant/ask",
         json_payload={
             "question": "Explain employee 0",
+            "solve_request": request_payload,
+        },
+    ).json()
+    after = _api_request("POST", "/solve", json_payload=request_payload).json()
+
+    assert before["ok"] is True
+    assert assistant_response["ok"] is True
+    assert after["ok"] is True
+    assert _stable_solve_output(before["result"]) == _stable_solve_output(
+        after["result"]
+    )
+
+
+def test_api_assistant_recommendations_do_not_change_debug_solve_output() -> None:
+    request_payload = _shortage_reduction_solve_request()
+
+    before = _api_request("POST", "/solve", json_payload=request_payload).json()
+    assistant_response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Recommend a way to fix shortages",
             "solve_request": request_payload,
         },
     ).json()

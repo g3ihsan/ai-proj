@@ -161,15 +161,18 @@ preserve schema/solve validation error types; provider failures use
 they are built from `solve_request`, `kind`, and `target`.
 
 `POST /assistant/ask` is a deterministic intent router over the existing
-explanation and narration helpers. It supports summary, shortage, assignment,
-employee, and shift explanation questions. It uses explicit target patterns
-only, plus exact case-insensitive employee name matches when one employee in the
-solve request matches. Name matching is exact phrase matching, not substring or
-fuzzy matching. It does not use an LLM for routing and does not generate
-schedules. Explicit `target` fields override fields parsed from the question
-text. Assistant responses include both `message` and `answer` with the same
-text. Unsupported or under-specified questions return `ok=true` with
-`status=unsupported` and no narration.
+explanation, narration, and recommendation helpers. It supports summary,
+shortage, assignment, employee, and shift explanation questions, plus
+shortage-fix/what-if recommendation questions for the existing
+`reduce_shortages` recommendation goal. It uses explicit target patterns only,
+plus exact case-insensitive employee name matches when one employee in the solve
+request matches. Name matching is exact phrase matching, not substring or fuzzy
+matching. It does not use an LLM for routing and does not generate schedules.
+For recommendation intents, it calls the deterministic scenario recommendation
+engine and summarizes the returned comparison payload. Explicit `target` fields
+override fields parsed from the question text. Assistant responses include both
+`message` and `answer` with the same text. Unsupported or under-specified
+questions return `ok=true` with `status=unsupported` and no narration.
 
 `POST /recommendations` and its `POST /recommend/what-if` alias evaluate
 deterministic what-if scenarios through the same CP-SAT solver. The current
