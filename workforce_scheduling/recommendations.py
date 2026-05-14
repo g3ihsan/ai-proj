@@ -375,6 +375,10 @@ def recommend_scenarios(
                         evaluation,
                         comparison,
                     ),
+                    "grounding": build_recommendation_grounding(
+                        evaluation,
+                        comparison,
+                    ),
                 }
             )
 
@@ -463,6 +467,23 @@ def _discarded_recommendation(
         "changes": [dict(change) for change in recommendation["changes"]],
         "comparison": dict(recommendation["comparison"]),
         "explanation": dict(recommendation["explanation"]),
+        "grounding": dict(recommendation["grounding"]),
+    }
+
+
+def build_recommendation_grounding(
+    scenario_evaluation: Mapping[str, Any],
+    comparison: Mapping[str, Any],
+) -> dict[str, Any]:
+    changes = _list_field(scenario_evaluation, "changes")
+    return {
+        "source": "deterministic_scenario_solve",
+        "scenario_id": str(scenario_evaluation["scenario_id"]),
+        "scenario_type": _scenario_type_from_changes(changes),
+        "baseline_total_shortage": int(comparison["baseline_total_shortage"]),
+        "scenario_total_shortage": int(comparison["scenario_total_shortage"]),
+        "shortage_reduction": int(comparison["shortage_reduction"]),
+        "uses_external_llm": False,
     }
 
 
@@ -610,6 +631,12 @@ def _recommendation_next_checks(changes: list[Any]) -> list[str]:
         checks.insert(0, "Confirm a temporary worker is actually available.")
         checks.insert(1, "Confirm the temporary staffing cost is acceptable.")
     return checks
+
+
+def _scenario_type_from_changes(changes: list[Any]) -> str:
+    if not changes:
+        return "unknown"
+    return str(_mapping_change(changes[0]).get("type", "unknown"))
 
 
 def _mapping_change(change: Any) -> Mapping[str, Any]:

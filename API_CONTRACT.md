@@ -398,6 +398,9 @@ Returned recommendation entries include a deterministic `explanation` object
 with `why_it_helps`, `what_changes`, `expected_improvement`, `tradeoffs`, and
 `manager_next_checks`. These fields are generated from the scenario change and
 solver comparison payload only; no external LLM or ungrounded planner is used.
+Each returned recommendation also includes recommendation-level `grounding`
+metadata with the deterministic source, scenario ID, scenario type, baseline
+shortage, scenario shortage, shortage reduction, and `uses_external_llm=false`.
 Version 1 supports only:
 
 - `reduce_shortages`
@@ -525,6 +528,15 @@ Recommendation entry example:
     "baseline_total_shortage": 2,
     "scenario_total_shortage": 1
   },
+  "grounding": {
+    "source": "deterministic_scenario_solve",
+    "scenario_id": "add_temporary_employee_3_day_0_shift_1_role_worker",
+    "scenario_type": "add_temporary_employee",
+    "baseline_total_shortage": 2,
+    "scenario_total_shortage": 1,
+    "shortage_reduction": 1,
+    "uses_external_llm": false
+  },
   "explanation": {
     "why_it_helps": "The baseline had an uncovered worker requirement on day 0 shift 1. No existing-employee scenario was available for that slot, so this scenario adds one qualified temporary employee and re-solves.",
     "what_changes": [
@@ -553,8 +565,9 @@ are returned in `discarded_scenarios` with `status=discarded` and
 beyond that returned recommendation cap are reported in
 `discarded_recommendations` with `status=discarded` and
 `reason=MAX_RECOMMENDATION_LIMIT`; discarded recommendation entries preserve
-the same deterministic `explanation` object so clients can show why a capped
-recommendation would have helped without treating it as returned top-N advice.
+the same deterministic `grounding` and `explanation` objects so clients can
+show why a capped recommendation would have helped without treating it as
+returned top-N advice.
 Unsupported goals or invalid recommendation request shapes return
 `RecommendationError` with HTTP 400. Invalid solve request/schema errors retain
 their original schema error type with HTTP 400. Internal scenario solve failures

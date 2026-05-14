@@ -2285,6 +2285,15 @@ def test_recommendations_reduce_shortages_with_grounded_scenario_solve() -> None
             "Confirm this change follows local staffing policy.",
         ],
     }
+    assert response["recommendations"][0]["grounding"] == {
+        "source": "deterministic_scenario_solve",
+        "scenario_id": "make_employee_1_available_day_0_shift_0_role_worker",
+        "scenario_type": "set_availability",
+        "baseline_total_shortage": 2,
+        "scenario_total_shortage": 1,
+        "shortage_reduction": 1,
+        "uses_external_llm": False,
+    }
     assert response["evaluated_scenarios"][0]["snapshot"]["total_shortage"] == 1
     assert response["metadata"]["uses_external_llm"] is False
     assert response["metadata"]["recommendation_type"] == "what_if"
@@ -2359,6 +2368,17 @@ def test_recommendations_reduce_shortages_with_max_hours_scenario_solve() -> Non
             "Confirm this change follows local staffing policy.",
         ],
     }
+    assert response["recommendations"][0]["grounding"] == {
+        "source": "deterministic_scenario_solve",
+        "scenario_id": (
+            "increase_employee_0_max_hours_to_16_for_day_0_shift_0_role_worker"
+        ),
+        "scenario_type": "increase_employee_max_hours",
+        "baseline_total_shortage": 1,
+        "scenario_total_shortage": 0,
+        "shortage_reduction": 1,
+        "uses_external_llm": False,
+    }
     assert response["evaluated_scenarios"][0]["snapshot"]["total_shortage"] == 0
 
 
@@ -2419,6 +2439,15 @@ def test_recommendations_reduce_shortages_with_temporary_employee_scenario_solve
             "Confirm the change is operationally feasible before editing the roster.",
             "Confirm this change follows local staffing policy.",
         ],
+    }
+    assert response["recommendations"][0]["grounding"] == {
+        "source": "deterministic_scenario_solve",
+        "scenario_id": "add_temporary_employee_1_day_0_shift_0_role_worker",
+        "scenario_type": "add_temporary_employee",
+        "baseline_total_shortage": 1,
+        "scenario_total_shortage": 0,
+        "shortage_reduction": 1,
+        "uses_external_llm": False,
     }
     assert response["evaluated_scenarios"][0]["snapshot"]["total_shortage"] == 0
 
@@ -2553,6 +2582,29 @@ def test_recommendations_reports_discarded_recommendations_at_limit() -> None:
         "explanation" in item
         for item in response["discarded_recommendations"]
     )
+    assert [
+        item["grounding"]
+        for item in response["discarded_recommendations"]
+    ] == [
+        {
+            "source": "deterministic_scenario_solve",
+            "scenario_id": "make_employee_2_available_day_0_shift_0_role_worker",
+            "scenario_type": "set_availability",
+            "baseline_total_shortage": 3,
+            "scenario_total_shortage": 2,
+            "shortage_reduction": 1,
+            "uses_external_llm": False,
+        },
+        {
+            "source": "deterministic_scenario_solve",
+            "scenario_id": "make_employee_3_available_day_0_shift_0_role_worker",
+            "scenario_type": "set_availability",
+            "baseline_total_shortage": 3,
+            "scenario_total_shortage": 2,
+            "shortage_reduction": 1,
+            "uses_external_llm": False,
+        },
+    ]
 
 
 def test_recommendations_reject_unsupported_goal() -> None:

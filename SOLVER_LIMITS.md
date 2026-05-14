@@ -144,6 +144,11 @@ changes and solver comparison numbers. They describe why the scenario helped,
 what changed, expected shortage improvement, possible operational tradeoffs,
 and manager next checks. They do not introduce an LLM, change solver behavior,
 or alter scenario ranking.
+Recommendation grounding fields are deterministic metadata derived from the
+evaluated scenario and comparison: source, scenario ID, scenario type,
+baseline/scenario shortage totals, shortage reduction, and
+`uses_external_llm=false`. Grounding is copied onto discarded positive
+recommendations as well, without solving or ranking anything differently.
 Scenario mutation validation is intentionally strict so malformed scenario
 changes fail at the recommendation boundary.
 

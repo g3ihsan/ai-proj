@@ -207,6 +207,10 @@ helps, the concrete scenario changes, expected shortage improvement, possible
 tradeoffs, and manager next checks. Assistant recommendation tests assert the
 assistant summary remains deterministic, JSON-serializable, and uses the same
 grounded recommendation payload rather than a separate narration provider.
+Grounding contract tests assert returned and discarded recommendations include
+`grounding.source=deterministic_scenario_solve`, the evaluated scenario ID,
+scenario type, baseline/scenario shortage totals, shortage reduction, and
+`uses_external_llm=false`.
 
 Temporary employee hardening tests pin deterministic generation details:
 non-colliding `employee_id`, deterministic name, exactly one role matching the

@@ -1128,6 +1128,15 @@ def test_api_assistant_ask_routes_recommendation_question() -> None:
         "Confirm the change is operationally feasible before editing the roster.",
         "Confirm this change follows local staffing policy.",
     ]
+    assert result_payload["recommendation"]["recommendations"][0]["grounding"] == {
+        "source": "deterministic_scenario_solve",
+        "scenario_id": "make_employee_1_available_day_0_shift_0_role_worker",
+        "scenario_type": "set_availability",
+        "baseline_total_shortage": 1,
+        "scenario_total_shortage": 0,
+        "shortage_reduction": 1,
+        "uses_external_llm": False,
+    }
     assert "Best recommendation:" in result_payload["message"]
     assert "Next check:" in result_payload["message"]
     json.dumps(response_payload, sort_keys=True)
@@ -1611,6 +1620,15 @@ def test_api_recommendations_returns_grounded_shortage_reduction() -> None:
     assert result_payload["recommendations"][0]["explanation"][
         "expected_improvement"
     ] == "Total shortage decreases from 1 to 0."
+    assert result_payload["recommendations"][0]["grounding"] == {
+        "source": "deterministic_scenario_solve",
+        "scenario_id": "make_employee_1_available_day_0_shift_0_role_worker",
+        "scenario_type": "set_availability",
+        "baseline_total_shortage": 1,
+        "scenario_total_shortage": 0,
+        "shortage_reduction": 1,
+        "uses_external_llm": False,
+    }
     assert result_payload["metadata"]["uses_external_llm"] is False
     assert result_payload["metadata"]["recommendation_type"] == "what_if"
     assert result_payload["metadata"]["supported_scenario_types"] == [
@@ -1656,6 +1674,17 @@ def test_api_recommendations_returns_grounded_max_hours_reduction() -> None:
     assert result_payload["recommendations"][0]["explanation"]["tradeoffs"] == [
         "May increase workload or overtime risk for the employee."
     ]
+    assert result_payload["recommendations"][0]["grounding"] == {
+        "source": "deterministic_scenario_solve",
+        "scenario_id": (
+            "increase_employee_0_max_hours_to_16_for_day_0_shift_0_role_worker"
+        ),
+        "scenario_type": "increase_employee_max_hours",
+        "baseline_total_shortage": 1,
+        "scenario_total_shortage": 0,
+        "shortage_reduction": 1,
+        "uses_external_llm": False,
+    }
 
 
 def test_api_recommendations_returns_grounded_temporary_employee_reduction() -> None:
@@ -1711,6 +1740,15 @@ def test_api_recommendations_returns_grounded_temporary_employee_reduction() -> 
             "Confirm the change is operationally feasible before editing the roster.",
             "Confirm this change follows local staffing policy.",
         ],
+    }
+    assert result_payload["recommendations"][0]["grounding"] == {
+        "source": "deterministic_scenario_solve",
+        "scenario_id": "add_temporary_employee_1_day_0_shift_0_role_worker",
+        "scenario_type": "add_temporary_employee",
+        "baseline_total_shortage": 1,
+        "scenario_total_shortage": 0,
+        "shortage_reduction": 1,
+        "uses_external_llm": False,
     }
 
 
