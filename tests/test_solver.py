@@ -1510,6 +1510,74 @@ def test_assistant_intent_router_returns_unsupported_for_missing_target() -> Non
     assert intent.missing_fields == ("employee_id", "day", "shift", "role")
 
 
+def test_assistant_intent_router_explicit_target_overrides_question_text() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    intent = parse_assistant_intent(
+        "Why was employee 1 assigned to day 2 shift 3 as supervisor?",
+        solve_request=request_payload,
+        target_hint={
+            "employee_id": 0,
+            "day": 0,
+            "shift": 0,
+            "role": "worker",
+        },
+    )
+
+    assert intent.kind == "assignment"
+    assert intent.target == {
+        "employee_id": 0,
+        "day": 0,
+        "shift": 0,
+        "role": "worker",
+    }
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_target"),
+    [
+        (
+            "Why was employee 1 assigned to day 0 shift 0 as worker?",
+            {"employee_id": 0, "day": 0, "shift": 0, "role": "worker"},
+        ),
+        (
+            "Why was employee 0 assigned to day 2 shift 0 as worker?",
+            {"employee_id": 0, "day": 0, "shift": 0, "role": "worker"},
+        ),
+        (
+            "Why was employee 0 assigned to day 0 shift 3 as worker?",
+            {"employee_id": 0, "day": 0, "shift": 0, "role": "worker"},
+        ),
+        (
+            "Why was employee 0 assigned to day 0 shift 0 as supervisor?",
+            {"employee_id": 0, "day": 0, "shift": 0, "role": "worker"},
+        ),
+    ],
+)
+def test_assistant_intent_router_each_explicit_target_field_overrides_text(
+    question: str,
+    expected_target: Dict[str, object],
+) -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    intent = parse_assistant_intent(
+        question,
+        solve_request=request_payload,
+        target_hint=expected_target,
+    )
+
+    assert intent.kind == "assignment"
+    assert intent.target == expected_target
+
+
 def test_assistant_intent_router_rejects_ambiguous_employee_name() -> None:
     request_payload = solve_request_to_payload(
         _small_fully_feasible_problem(),

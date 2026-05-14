@@ -163,7 +163,8 @@ explanation and narration helpers. It supports summary, shortage, assignment,
 employee, and shift explanation questions. It uses explicit target patterns
 only, plus exact case-insensitive employee name matches when one employee in the
 solve request matches. It does not use an LLM for routing and does not generate
-schedules. Unsupported or under-specified questions return `ok=true` with
+schedules. Explicit `target` fields override fields parsed from the question
+text. Unsupported or under-specified questions return `ok=true` with
 `status=unsupported` and no narration.
 
 Run benchmark fixtures:

@@ -338,6 +338,8 @@ The router extracts only explicit target fields such as `employee 0`, `day 0`,
 `shift 1`, `role worker`, `as worker`, or `for worker`. It may resolve an exact
 case-insensitive employee name from the solve request when exactly one employee
 matches. It does not fuzzy match names. Ambiguous names are rejected.
+When `target` is provided in the request, those explicit target fields override
+any fields parsed from the question text.
 
 If the question is unsupported or lacks required target fields, the endpoint
 returns `ok=true` with `status=unsupported` and no narration. Request-shape

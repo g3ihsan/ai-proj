@@ -950,6 +950,39 @@ def test_api_assistant_ask_uses_target_hint_when_question_is_sparse() -> None:
     assert result_payload["explanation"]["type"] == "assignment_explanation"
 
 
+def test_api_assistant_ask_explicit_target_overrides_question_text() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": (
+                "Why was employee 1 assigned to day 2 shift 3 as supervisor?"
+            ),
+            "solve_request": _small_solve_request(),
+            "target": {
+                "employee_id": 0,
+                "day": 0,
+                "shift": 0,
+                "role": "worker",
+            },
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["intent"] == {
+        "kind": "assignment",
+        "supported": True,
+        "target": {
+            "employee_id": 0,
+            "day": 0,
+            "shift": 0,
+            "role": "worker",
+        },
+    }
+    assert result_payload["explanation"]["type"] == "assignment_explanation"
+
+
 def test_api_assistant_ask_returns_unsupported_when_target_is_missing() -> None:
     response = _api_request(
         "POST",

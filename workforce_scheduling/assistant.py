@@ -50,14 +50,14 @@ def parse_assistant_intent(
         raise AssistantIntentError("assistant question must be a non-empty string")
 
     normalized_question = _normalize_question(question)
-    extracted = _target_from_hint(target_hint)
-    extracted.update(_extract_numeric_targets(normalized_question))
+    extracted = _extract_numeric_targets(normalized_question)
     name_employee_id = _employee_id_from_exact_name(question, solve_request)
     if name_employee_id is not None and "employee_id" not in extracted:
         extracted["employee_id"] = name_employee_id
     role = _extract_role(normalized_question)
     if role is not None and "role" not in extracted:
         extracted["role"] = role
+    extracted.update(_target_from_hint(target_hint))
 
     kind = _classify_kind(normalized_question, extracted)
     if kind == "unsupported":
