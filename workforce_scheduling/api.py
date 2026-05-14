@@ -11,6 +11,7 @@ from uuid import uuid4
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
+from .assistant import assistant_response_from_request
 from .ai_explanations import (
     ExplanationNarrationError,
     narration_provider_from_name,
@@ -158,6 +159,7 @@ async def metadata() -> dict[str, Any]:
             "explain_employee": "POST /explain/employee",
             "explain_shift": "POST /explain/shift",
             "explain_narrate": "POST /explain/narrate",
+            "assistant_ask": "POST /assistant/ask",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -214,6 +216,18 @@ async def metadata() -> dict[str, Any]:
             "uses_external_llm_by_default": False,
             "response_shape": {"ok": True, "result": "Narration payload"},
             **narration_provider_metadata(),
+        },
+        "assistant_endpoint": {
+            "source": "Deterministic explanation and narration helpers",
+            "uses_external_llm_by_default": False,
+            "supported_intents": [
+                "summary",
+                "shortages",
+                "assignment",
+                "employee",
+                "shift",
+            ],
+            "response_shape": {"ok": True, "result": "Assistant response"},
         },
         "job_execution": {
             "backend": "in_memory_thread_pool",
@@ -317,6 +331,29 @@ async def explain_narrate_endpoint(request: Request) -> JSONResponse:
     if _error_type(response_payload) == "NarrationProviderError":
         status_code = 502
     _log_solve_route(request, "explain_narrate", response_payload, status_code)
+    return JSONResponse(content=response_payload, status_code=status_code)
+
+
+@app.post("/assistant/ask")
+async def assistant_ask_endpoint(request: Request) -> JSONResponse:
+    try:
+        request_payload = await _json_request_payload(request)
+        response_payload = {
+            "ok": True,
+            "result": assistant_response_from_request(request_payload),
+        }
+    except Exception as exc:
+        response_payload = _error_payload_for_request(exc, request)
+
+    response_payload = _with_request_id(response_payload, request)
+    status_code = 200 if response_payload["ok"] else 400
+    if _error_type(response_payload) == "RequestTooLargeError":
+        status_code = 413
+    if _error_type(response_payload) == "ExplanationTargetNotFoundError":
+        status_code = 404
+    if _error_type(response_payload) == "NarrationProviderError":
+        status_code = 502
+    _log_solve_route(request, "assistant_ask", response_payload, status_code)
     return JSONResponse(content=response_payload, status_code=status_code)
 
 

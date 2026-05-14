@@ -13,6 +13,11 @@ import sys
 import httpx
 import pytest
 
+from workforce_scheduling.assistant import (
+    AssistantIntentError,
+    assistant_response_from_request,
+    parse_assistant_intent,
+)
 from workforce_scheduling.ai_explanations import (
     ExplanationNarrationError,
     FakeNarrationProvider,
@@ -1457,6 +1462,91 @@ def test_ai_narration_provider_failure_uses_provider_error() -> None:
         narrate_explanation(summary, FailingProvider())
 
     assert str(exc_info.value) == "provider failed"
+
+
+def test_assistant_intent_router_extracts_supported_targets() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    assignment = parse_assistant_intent(
+        "Why was employee 0 assigned to day 0 shift 0 as worker?",
+        solve_request=request_payload,
+    )
+    employee = parse_assistant_intent(
+        "Explain employee 1",
+        solve_request=request_payload,
+    )
+    shift = parse_assistant_intent(
+        "Explain day 0 shift 0",
+        solve_request=request_payload,
+    )
+    shortages = parse_assistant_intent(
+        "Are there coverage gaps?",
+        solve_request=request_payload,
+    )
+
+    assert assignment.kind == "assignment"
+    assert assignment.target == {
+        "employee_id": 0,
+        "day": 0,
+        "shift": 0,
+        "role": "worker",
+    }
+    assert employee.kind == "employee"
+    assert employee.target == {"employee_id": 1}
+    assert shift.kind == "shift"
+    assert shift.target == {"day": 0, "shift": 0}
+    assert shortages.kind == "shortages"
+
+
+def test_assistant_intent_router_returns_unsupported_for_missing_target() -> None:
+    intent = parse_assistant_intent("Why was this assignment made?")
+
+    assert intent.kind == "unsupported"
+    assert intent.supported is False
+    assert intent.missing_fields == ("employee_id", "day", "shift", "role")
+
+
+def test_assistant_intent_router_rejects_ambiguous_employee_name() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+    request_payload["problem"]["employees"][0]["name"] = "Alex"
+    request_payload["problem"]["employees"][1]["name"] = "Alex"
+
+    with pytest.raises(AssistantIntentError) as exc_info:
+        parse_assistant_intent(
+            "Why was Alex assigned to day 0 shift 0 as worker?",
+            solve_request=request_payload,
+        )
+
+    assert str(exc_info.value) == "employee name match is ambiguous"
+
+
+def test_assistant_response_uses_deterministic_explanation_and_narration() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    response = assistant_response_from_request(
+        {
+            "question": "Summarize this schedule",
+            "solve_request": request_payload,
+        }
+    )
+
+    assert response["type"] == "assistant_response"
+    assert response["intent"]["kind"] == "summary"
+    assert response["explanation"]["type"] == "summary_explanation"
+    assert response["narration"]["source_explanation_type"] == "summary_explanation"
+    assert response["provider"]["uses_external_llm"] is False
 
 
 def test_explain_assignment_returns_non_assignment_explanation_when_not_assigned() -> None:

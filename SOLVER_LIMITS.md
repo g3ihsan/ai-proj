@@ -109,6 +109,11 @@ When narration composes deterministic explanations internally, target and schema
 errors preserve their original error types instead of being collapsed into a
 generic narration error. Narration responses built from `solve_request` include
 source metadata with the mode, kind, and normalized target.
+The assistant router in `workforce_scheduling.assistant` is deterministic. It
+routes only supported manager explanation questions to the existing explanation
+and narration helpers. It does not use an LLM for intent detection, does not
+perform fuzzy employee-name matching, and returns an unsupported response rather
+than guessing missing assignment, employee, or shift targets.
 The current evidence contract version is `1`. Public evidence uses stable
 uppercase reason codes. Internal lowercase blocker names are deliberately mapped
 to those public codes; unknown internal blocker names should fail tests instead
@@ -122,7 +127,8 @@ preserves the same solved roster and objective values.
 
 `workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
 It exposes `GET /health`, `GET /metadata`, `POST /solve`, deterministic
-`POST /explain/*` endpoints, `POST /explain/narrate`, `POST /solve-csv`, `POST /solve-jobs`,
+`POST /explain/*` endpoints, `POST /explain/narrate`, `POST /assistant/ask`,
+`POST /solve-csv`, `POST /solve-jobs`,
 `GET /solve-jobs/{job_id}`, and the static `GET /viewer/` roster viewer. The
 explanation endpoints format existing Solver Evidence Layer fields into
 manager-readable JSON payloads. They are not LLM endpoints and do not generate

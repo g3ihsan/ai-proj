@@ -104,6 +104,7 @@ HTTP endpoints:
 - `POST /explain/employee`
 - `POST /explain/shift`
 - `POST /explain/narrate`
+- `POST /assistant/ask`
 - `POST /solve-csv`
 - `POST /solve-jobs`
 - `GET /solve-jobs/{job_id}`
@@ -156,6 +157,14 @@ evidence preserve `ExplanationTargetNotFoundError`; invalid solve requests
 preserve schema/solve validation error types; provider failures use
 `NarrationProviderError`. Narration responses include `source` metadata when
 they are built from `solve_request`, `kind`, and `target`.
+
+`POST /assistant/ask` is a deterministic intent router over the existing
+explanation and narration helpers. It supports summary, shortage, assignment,
+employee, and shift explanation questions. It uses explicit target patterns
+only, plus exact case-insensitive employee name matches when one employee in the
+solve request matches. It does not use an LLM for routing and does not generate
+schedules. Unsupported or under-specified questions return `ok=true` with
+`status=unsupported` and no narration.
 
 Run benchmark fixtures:
 

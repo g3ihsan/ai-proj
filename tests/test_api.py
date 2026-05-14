@@ -202,6 +202,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "explain_employee": "POST /explain/employee",
             "explain_shift": "POST /explain/shift",
             "explain_narrate": "POST /explain/narrate",
+            "assistant_ask": "POST /assistant/ask",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -264,6 +265,18 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
                     "uses_external_llm": False,
                 }
             ],
+        },
+        "assistant_endpoint": {
+            "source": "Deterministic explanation and narration helpers",
+            "uses_external_llm_by_default": False,
+            "supported_intents": [
+                "summary",
+                "shortages",
+                "assignment",
+                "employee",
+                "shift",
+            ],
+            "response_shape": {"ok": True, "result": "Assistant response"},
         },
         "job_execution": {
             "backend": "in_memory_thread_pool",
@@ -842,6 +855,141 @@ def test_api_explain_narrate_rejects_invalid_payload() -> None:
         "message"
     ]
     assert response_payload["error"]["request_id"] == response.headers["x-request-id"]
+
+
+def test_api_assistant_ask_routes_summary_question() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Explain this roster",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["type"] == "assistant_response"
+    assert result_payload["intent"] == {
+        "kind": "summary",
+        "supported": True,
+        "target": {},
+    }
+    assert result_payload["explanation"]["type"] == "summary_explanation"
+    assert result_payload["narration"]["source_explanation_type"] == (
+        "summary_explanation"
+    )
+    assert "The solver assigned 2 shifts with 0 total shortages." in (
+        result_payload["message"]
+    )
+
+
+def test_api_assistant_ask_routes_assignment_question() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Why was employee 0 assigned to day 0 shift 0 as worker?",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["intent"] == {
+        "kind": "assignment",
+        "supported": True,
+        "target": {
+            "employee_id": 0,
+            "day": 0,
+            "shift": 0,
+            "role": "worker",
+        },
+    }
+    assert result_payload["explanation"]["type"] == "assignment_explanation"
+    assert result_payload["provider"]["uses_external_llm"] is False
+
+
+def test_api_assistant_ask_routes_employee_name_match() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Why was e0 assigned to day 0 shift 0 as worker?",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["intent"]["kind"] == "assignment"
+    assert result_payload["intent"]["target"]["employee_id"] == 0
+
+
+def test_api_assistant_ask_uses_target_hint_when_question_is_sparse() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Explain this assignment",
+            "solve_request": _small_solve_request(),
+            "target": {
+                "employee_id": 0,
+                "day": 0,
+                "shift": 0,
+                "role": "worker",
+            },
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["intent"]["kind"] == "assignment"
+    assert result_payload["explanation"]["type"] == "assignment_explanation"
+
+
+def test_api_assistant_ask_returns_unsupported_when_target_is_missing() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Why was this assignment made?",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["status"] == "unsupported"
+    assert result_payload["intent"] == {
+        "kind": "unsupported",
+        "supported": False,
+        "target": {},
+        "missing_fields": ["employee_id", "day", "shift", "role"],
+    }
+    assert result_payload["narration"] is None
+    assert result_payload["explanation"] is None
+
+
+def test_api_assistant_ask_preserves_schema_error() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Explain this roster",
+            "solve_request": {"options": {"seed": 1}},
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "SchemaValidationError"
+    assert response_payload["error"]["message"] == (
+        "Solve request must contain a problem object"
+    )
 
 
 def test_api_explain_assignment_returns_404_for_missing_target() -> None:

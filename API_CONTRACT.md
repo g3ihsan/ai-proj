@@ -8,6 +8,7 @@ thin boundaries:
 - files: JSON request files and three-file CSV input/output
 - deterministic explanations: `workforce_scheduling.explanations`
 - optional narration: `workforce_scheduling.ai_explanations`
+- deterministic assistant routing: `workforce_scheduling.assistant`
 
 The solver remains the source of truth. API, job, and CSV surfaces must not add
 solver objectives, constraints, persistence, or alternate scheduling behavior.
@@ -297,6 +298,50 @@ Narration errors preserve the narrowest available error type:
 - valid target with no deterministic evidence: `ExplanationTargetNotFoundError`, HTTP 404
 - invalid solve request/schema: original schema/solve validation error, HTTP 400
 - provider failure: `NarrationProviderError`, HTTP 502
+
+### `POST /assistant/ask`
+
+The assistant endpoint is a deterministic router for manager explanation
+questions. It does not use an LLM for intent detection. It parses a supported
+question shape, builds the matching deterministic explanation, narrates it with
+the configured narration provider, and returns one grounded assistant response.
+
+Request:
+
+```json
+{
+  "question": "Why was employee 0 assigned to day 0 shift 0 as worker?",
+  "solve_request": {
+    "schema_version": 1,
+    "problem": {},
+    "options": {}
+  },
+  "target": {
+    "employee_id": 0,
+    "day": 0,
+    "shift": 0,
+    "role": "worker"
+  },
+  "provider": "fake"
+}
+```
+
+Supported routed intents:
+
+- `summary`
+- `shortages`
+- `assignment`
+- `employee`
+- `shift`
+
+The router extracts only explicit target fields such as `employee 0`, `day 0`,
+`shift 1`, `role worker`, `as worker`, or `for worker`. It may resolve an exact
+case-insensitive employee name from the solve request when exactly one employee
+matches. It does not fuzzy match names. Ambiguous names are rejected.
+
+If the question is unsupported or lacks required target fields, the endpoint
+returns `ok=true` with `status=unsupported` and no narration. Request-shape
+errors return `AssistantIntentError`.
 
 ### `POST /solve-csv`
 
