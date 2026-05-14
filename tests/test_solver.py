@@ -53,6 +53,12 @@ from workforce_scheduling.explanations import (
     explain_summary,
     solve_request_to_explanation_payload,
 )
+from workforce_scheduling.recommendations import (
+    RecommendationError,
+    generate_shortage_reduction_scenarios,
+    recommendation_response_from_request,
+    recommend_scenarios,
+)
 from workforce_scheduling.solve import (
     Assignment,
     BLOCKER_REASON_CODE_MAP,
@@ -1714,6 +1720,114 @@ def test_assistant_response_for_unsupported_intent_includes_answer_alias() -> No
     assert response["answer"] == response["message"]
     assert response["narration"] is None
     assert response["explanation"] is None
+
+
+def test_recommendations_generate_shortage_reduction_scenarios() -> None:
+    request_payload = solve_request_to_payload(
+        _evidence_blocker_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+    baseline_response = solve_payload(json.loads(json.dumps(request_payload)))
+    baseline_result = baseline_response["result"]
+
+    scenarios = generate_shortage_reduction_scenarios(
+        request_payload,
+        baseline_result,
+    )
+
+    assert scenarios == [
+        {
+            "scenario_id": "make_employee_1_available_day_0_shift_0_role_worker",
+            "goal": "reduce_shortages",
+            "title": "Ask employee 1 to work day 0 shift 0 as worker",
+            "description": (
+                "Scenario changes only this employee availability flag "
+                "and re-solves with the existing CP-SAT model."
+            ),
+            "changes": [
+                {
+                    "type": "set_availability",
+                    "employee_id": 1,
+                    "day": 0,
+                    "shift": 0,
+                    "role": "worker",
+                    "from": False,
+                    "to": True,
+                }
+            ],
+        }
+    ]
+
+
+def test_recommendations_reduce_shortages_with_grounded_scenario_solve() -> None:
+    request_payload = solve_request_to_payload(
+        _evidence_blocker_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    response = recommend_scenarios(request_payload)
+
+    assert response["type"] == "scenario_recommendations"
+    assert response["goal"] == "reduce_shortages"
+    assert response["baseline"]["total_shortage"] == 2
+    assert response["summary"] == {
+        "baseline_total_shortage": 2,
+        "scenario_count": 1,
+        "recommendation_count": 1,
+        "best_shortage_reduction": 1,
+    }
+    assert response["recommendations"][0]["comparison"] == {
+        "total_shortage_delta": -1,
+        "shortage_reduction": 1,
+        "baseline_total_shortage": 2,
+        "scenario_total_shortage": 1,
+        "total_objective_delta": response["recommendations"][0]["comparison"][
+            "total_objective_delta"
+        ],
+    }
+    assert response["evaluated_scenarios"][0]["snapshot"]["total_shortage"] == 1
+    assert response["metadata"]["uses_external_llm"] is False
+    json.dumps(response, sort_keys=True)
+
+
+def test_recommendations_return_empty_when_no_shortage_exists() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    response = recommendation_response_from_request(
+        {
+            "goal": "reduce_shortages",
+            "solve_request": request_payload,
+        }
+    )
+
+    assert response["baseline"]["total_shortage"] == 0
+    assert response["recommendations"] == []
+    assert response["evaluated_scenarios"] == []
+    assert response["summary"]["recommendation_count"] == 0
+
+
+def test_recommendations_reject_unsupported_goal() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    with pytest.raises(RecommendationError) as exc_info:
+        recommendation_response_from_request(
+            {
+                "goal": "balance_weekends",
+                "solve_request": request_payload,
+            }
+        )
+
+    assert "Unsupported recommendation goal balance_weekends" in str(exc_info.value)
 
 
 def test_explain_assignment_returns_non_assignment_explanation_when_not_assigned() -> None:

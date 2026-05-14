@@ -153,6 +153,33 @@ def _multi_role_shift_solve_request() -> Dict[str, object]:
     return request_payload
 
 
+def _shortage_reduction_solve_request() -> Dict[str, object]:
+    request_payload = _small_solve_request()
+    request_payload["problem"]["employees"] = [
+        {
+            "employee_id": 0,
+            "name": "E0",
+            "roles": ["worker"],
+            "hourly_cost": 20,
+            "max_weekly_hours": 40,
+            "availability": [[True]],
+        },
+        {
+            "employee_id": 1,
+            "name": "E1",
+            "roles": ["worker"],
+            "hourly_cost": 20,
+            "max_weekly_hours": 40,
+            "availability": [[False]],
+        },
+    ]
+    request_payload["problem"]["days"] = [0]
+    request_payload["problem"]["demand"] = [
+        {"day": 0, "shift": 0, "role": "worker", "required": 2}
+    ]
+    return request_payload
+
+
 def _explanation_request(
     request_payload: Dict[str, object],
     target: Dict[str, object],
@@ -203,6 +230,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "explain_shift": "POST /explain/shift",
             "explain_narrate": "POST /explain/narrate",
             "assistant_ask": "POST /assistant/ask",
+            "recommendations": "POST /recommendations",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -277,6 +305,16 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
                 "shift",
             ],
             "response_shape": {"ok": True, "result": "Assistant response"},
+        },
+        "recommendation_engine": {
+            "source": "Deterministic scenario solves",
+            "uses_external_llm": False,
+            "supported_goals": ["reduce_shortages"],
+            "max_scenarios": 5,
+            "response_shape": {
+                "ok": True,
+                "result": "Scenario recommendation payload",
+            },
         },
         "job_execution": {
             "backend": "in_memory_thread_pool",
@@ -1172,6 +1210,82 @@ def test_api_assistant_ask_does_not_change_debug_solve_output() -> None:
     assert before["ok"] is True
     assert assistant_response["ok"] is True
     assert after["ok"] is True
+    assert _stable_solve_output(before["result"]) == _stable_solve_output(
+        after["result"]
+    )
+
+
+def test_api_recommendations_returns_grounded_shortage_reduction() -> None:
+    response = _api_request(
+        "POST",
+        "/recommendations",
+        json_payload={
+            "goal": "reduce_shortages",
+            "solve_request": _shortage_reduction_solve_request(),
+        },
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["type"] == "scenario_recommendations"
+    assert result_payload["goal"] == "reduce_shortages"
+    assert result_payload["baseline"]["total_shortage"] == 1
+    assert result_payload["summary"]["recommendation_count"] == 1
+    assert result_payload["recommendations"][0]["comparison"]["shortage_reduction"] == 1
+    assert result_payload["recommendations"][0]["changes"] == [
+        {
+            "type": "set_availability",
+            "employee_id": 1,
+            "day": 0,
+            "shift": 0,
+            "role": "worker",
+            "from": False,
+            "to": True,
+        }
+    ]
+    assert result_payload["metadata"]["uses_external_llm"] is False
+    json.dumps(response_payload, sort_keys=True)
+
+
+def test_api_recommendations_rejects_invalid_request() -> None:
+    response = _api_request(
+        "POST",
+        "/recommendations",
+        json_payload={
+            "goal": "balance_weekends",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "RecommendationError"
+
+
+def test_api_recommendations_are_deterministic_and_do_not_mutate_solve_output() -> None:
+    request_payload = _shortage_reduction_solve_request()
+    recommendation_request = {
+        "goal": "reduce_shortages",
+        "solve_request": request_payload,
+    }
+
+    before = _api_request("POST", "/solve", json_payload=request_payload).json()
+    first = _api_request(
+        "POST",
+        "/recommendations",
+        json_payload=recommendation_request,
+    ).json()
+    second = _api_request(
+        "POST",
+        "/recommendations",
+        json_payload=recommendation_request,
+    ).json()
+    after = _api_request("POST", "/solve", json_payload=request_payload).json()
+
+    assert first == second
     assert _stable_solve_output(before["result"]) == _stable_solve_output(
         after["result"]
     )

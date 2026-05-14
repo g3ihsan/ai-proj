@@ -9,9 +9,12 @@ thin boundaries:
 - deterministic explanations: `workforce_scheduling.explanations`
 - optional narration: `workforce_scheduling.ai_explanations`
 - deterministic assistant routing: `workforce_scheduling.assistant`
+- deterministic scenario recommendations: `workforce_scheduling.recommendations`
 
 The solver remains the source of truth. API, job, and CSV surfaces must not add
 solver objectives, constraints, persistence, or alternate scheduling behavior.
+Recommendations are grounded in scenario solves that reuse the same CP-SAT
+solver; they are not LLM guesses.
 
 ## Versioning
 
@@ -348,6 +351,68 @@ returns `ok=true` with `status=unsupported` and no narration. Request-shape
 errors return `AssistantIntentError`. Assistant responses include both
 `message` and `answer`; these fields contain the same text so future clients can
 use `answer` without breaking older clients that read `message`.
+
+### `POST /recommendations`
+
+The recommendation endpoint evaluates small deterministic what-if scenarios
+against a baseline solve request. Version 1 supports only:
+
+- `reduce_shortages`
+
+The first scenario generator is intentionally narrow: for shortage slots, it
+tries making a qualified but unavailable employee available for that one
+day/shift, re-solves each candidate with the existing CP-SAT model, and reports
+only grounded comparisons. It does not change solver objectives, constraints,
+fairness behavior, warm-start behavior, or normal `/solve` requests.
+
+Request:
+
+```json
+{
+  "goal": "reduce_shortages",
+  "solve_request": {
+    "schema_version": 1,
+    "problem": {},
+    "options": {}
+  },
+  "max_scenarios": 5
+}
+```
+
+Success:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "type": "scenario_recommendations",
+    "goal": "reduce_shortages",
+    "baseline": {
+      "status": "OPTIMAL",
+      "total_shortage": 1
+    },
+    "recommendations": [],
+    "evaluated_scenarios": [],
+    "summary": {
+      "baseline_total_shortage": 1,
+      "scenario_count": 0,
+      "recommendation_count": 0,
+      "best_shortage_reduction": 0
+    },
+    "metadata": {
+      "engine": "deterministic_scenario_recommendations",
+      "uses_external_llm": false,
+      "changes_solver_behavior": false
+    }
+  }
+}
+```
+
+`max_scenarios` is optional and capped at 5 for this in-process prototype.
+Unsupported goals or invalid recommendation request shapes return
+`RecommendationError`. Scenario generation is decision support only: managers
+must still confirm whether the proposed availability change is operationally
+valid before using it as real input.
 
 ### `POST /solve-csv`
 

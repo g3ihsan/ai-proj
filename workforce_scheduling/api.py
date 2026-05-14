@@ -46,6 +46,11 @@ from .jobs import (
     job_payload,
     submit_solve_job,
 )
+from .recommendations import (
+    MAX_RECOMMENDATION_SCENARIOS,
+    SUPPORTED_RECOMMENDATION_GOALS,
+    recommendation_response_from_request,
+)
 from .schemas import (
     MAX_TIME_LIMIT_SEC,
     RESPONSE_MODES,
@@ -160,6 +165,7 @@ async def metadata() -> dict[str, Any]:
             "explain_shift": "POST /explain/shift",
             "explain_narrate": "POST /explain/narrate",
             "assistant_ask": "POST /assistant/ask",
+            "recommendations": "POST /recommendations",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -228,6 +234,16 @@ async def metadata() -> dict[str, Any]:
                 "shift",
             ],
             "response_shape": {"ok": True, "result": "Assistant response"},
+        },
+        "recommendation_engine": {
+            "source": "Deterministic scenario solves",
+            "uses_external_llm": False,
+            "supported_goals": list(SUPPORTED_RECOMMENDATION_GOALS),
+            "max_scenarios": MAX_RECOMMENDATION_SCENARIOS,
+            "response_shape": {
+                "ok": True,
+                "result": "Scenario recommendation payload",
+            },
         },
         "job_execution": {
             "backend": "in_memory_thread_pool",
@@ -354,6 +370,25 @@ async def assistant_ask_endpoint(request: Request) -> JSONResponse:
     if _error_type(response_payload) == "NarrationProviderError":
         status_code = 502
     _log_solve_route(request, "assistant_ask", response_payload, status_code)
+    return JSONResponse(content=response_payload, status_code=status_code)
+
+
+@app.post("/recommendations")
+async def recommendations_endpoint(request: Request) -> JSONResponse:
+    try:
+        request_payload = await _json_request_payload(request)
+        response_payload = {
+            "ok": True,
+            "result": recommendation_response_from_request(request_payload),
+        }
+    except Exception as exc:
+        response_payload = _error_payload_for_request(exc, request)
+
+    response_payload = _with_request_id(response_payload, request)
+    status_code = 200 if response_payload["ok"] else 400
+    if _error_type(response_payload) == "RequestTooLargeError":
+        status_code = 413
+    _log_solve_route(request, "recommendations", response_payload, status_code)
     return JSONResponse(content=response_payload, status_code=status_code)
 
 

@@ -105,6 +105,7 @@ HTTP endpoints:
 - `POST /explain/shift`
 - `POST /explain/narrate`
 - `POST /assistant/ask`
+- `POST /recommendations`
 - `POST /solve-csv`
 - `POST /solve-jobs`
 - `GET /solve-jobs/{job_id}`
@@ -168,6 +169,14 @@ schedules. Explicit `target` fields override fields parsed from the question
 text. Assistant responses include both `message` and `answer` with the same
 text. Unsupported or under-specified questions return `ok=true` with
 `status=unsupported` and no narration.
+
+`POST /recommendations` evaluates deterministic what-if scenarios through the
+same CP-SAT solver. The current supported goal is `reduce_shortages`. Scenario
+generation is intentionally narrow and capped: it tries availability changes
+for qualified unavailable employees on shortage slots, re-solves each scenario,
+and reports grounded shortage/objective comparisons. It does not use an LLM,
+does not generate schedules outside the solver, and does not change normal
+`/solve` behavior.
 
 Run benchmark fixtures:
 
