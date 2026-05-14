@@ -63,9 +63,11 @@ reports confidence, missing fields, unmapped headers, warnings, and
 only produces mapping reports and validation errors before canonical CSV
 parsing.
 `POST /csv/mapping/suggest` exposes that same mapper through the API. It accepts
-JSON header arrays, returns `complete` or `needs_review` reports without
-solving, rejects invalid header shapes with HTTP 400, and preserves the normal
-JSON request-size limit.
+combined JSON header arrays or a single `csv_type` plus `headers` dataset,
+returns `complete` or `needs_review` reports without solving, rejects invalid
+header shapes with HTTP 400, and preserves the normal JSON request-size limit.
+Availability header tests cover canonical day/shift columns and common
+day-name variants such as `Available Monday Morning`.
 
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:

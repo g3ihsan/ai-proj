@@ -536,6 +536,33 @@ def test_api_csv_mapping_suggest_returns_deterministic_report() -> None:
     json.dumps(response_payload, sort_keys=True)
 
 
+def test_api_csv_mapping_suggest_accepts_single_dataset_request() -> None:
+    response = _api_request(
+        "POST",
+        "/csv/mapping/suggest",
+        json_payload={
+            "csv_type": "employees",
+            "headers": [
+                "Staff ID",
+                "Full Name",
+                "Skills",
+                "Hourly Rate",
+                "Weekly Hours Limit",
+                "Available Monday Morning",
+            ],
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["type"] == "csv_mapping_report"
+    assert result_payload["status"] == "complete"
+    assert sorted(result_payload["files"]) == ["employees"]
+    assert result_payload["files"]["employees"]["mapping"]["availability"][
+        "source_headers"
+    ] == ["Available Monday Morning"]
+
+
 def test_api_csv_mapping_suggest_reports_needs_review_without_solving() -> None:
     response = _api_request(
         "POST",
@@ -577,6 +604,16 @@ def test_api_csv_mapping_suggest_reports_needs_review_without_solving() -> None:
             {"employee_headers": "Employee ID"},
             "CsvMappingError",
             "headers must be a sequence of strings",
+        ),
+        (
+            {"csv_type": "employees"},
+            "CsvMappingValidationError",
+            "CSV mapping request must include headers",
+        ),
+        (
+            {"csv_type": "unknown", "headers": ["x"]},
+            "CsvMappingValidationError",
+            "Unsupported CSV mapping csv_type unknown",
         ),
     ],
 )

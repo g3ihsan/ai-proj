@@ -10,6 +10,34 @@ CSV_TYPE_DEMAND = "demand"
 CSV_TYPE_SHIFTS = "shifts"
 MAPPING_STATUS_MAPPED = "mapped"
 MAPPING_STATUS_MISSING = "missing"
+DAY_NAME_TOKENS = {
+    "mon",
+    "monday",
+    "tue",
+    "tues",
+    "tuesday",
+    "wed",
+    "weds",
+    "wednesday",
+    "thu",
+    "thur",
+    "thurs",
+    "thursday",
+    "fri",
+    "friday",
+    "sat",
+    "saturday",
+    "sun",
+    "sunday",
+}
+AVAILABILITY_TOKENS = {
+    "avail",
+    "availability",
+    "available",
+    "works",
+    "work",
+    "can",
+}
 
 EMPLOYEE_CANONICAL_FIELDS = (
     "employee_id",
@@ -470,8 +498,18 @@ def _is_availability_header(normalized_header: str) -> bool:
         or re.fullmatch(r"avail_day_?\d+_shift_?\d+", normalized_header)
         or re.fullmatch(r"available_d_?\d+_s_?\d+", normalized_header)
         or re.fullmatch(r"avail_d_?\d+_s_?\d+", normalized_header)
+        or _is_day_name_availability_header(normalized_header)
         or normalized_header in FIELD_ALIASES[CSV_TYPE_EMPLOYEES]["availability"]
     )
+
+
+def _is_day_name_availability_header(normalized_header: str) -> bool:
+    tokens = set(normalized_header.split("_"))
+    if not tokens & DAY_NAME_TOKENS:
+        return False
+    if tokens & AVAILABILITY_TOKENS:
+        return True
+    return normalized_header.startswith(("available_", "avail_"))
 
 
 def _mapping_warnings(csv_type: str, mapping: Mapping[str, Any]) -> list[str]:

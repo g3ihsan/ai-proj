@@ -57,7 +57,9 @@ suggest mappings from messy headers to canonical employee, shift, and demand
 fields, but it does not parse rows, infer staffing demand, mutate files, call an
 external LLM/API, or bypass `csv_adapter.py` validation.
 `POST /csv/mapping/suggest` exposes only that deterministic report; it does not
-run the solver or change `/solve-csv` behavior.
+run the solver or change `/solve-csv` behavior. It accepts both combined
+multi-file header requests and single-dataset `csv_type` plus `headers`
+requests.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.

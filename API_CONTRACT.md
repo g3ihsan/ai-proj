@@ -311,7 +311,7 @@ narrates it with the configured narration provider, and returns one grounded
 assistant response. For recommendation intents, it calls the deterministic
 scenario recommendation engine and summarizes that returned comparison payload.
 
-Request:
+Combined request:
 
 ```json
 {
@@ -624,6 +624,26 @@ Request:
 At least one of `employee_headers`, `demand_headers`, or `shift_headers` must
 be provided. Each present value must be a non-empty list of unique headers after
 normalization.
+
+Single-dataset request:
+
+```json
+{
+  "csv_type": "employees",
+  "headers": [
+    "Staff ID",
+    "Full Name",
+    "Skills",
+    "Hourly Rate",
+    "Weekly Hours Limit",
+    "Available Monday Morning"
+  ]
+}
+```
+
+`csv_type` must be one of `employees`, `demand`, or `shifts`. The response shape
+is still `csv_mapping_report`; single-dataset requests return one entry in
+`files`.
 
 Response:
 
@@ -972,7 +992,9 @@ Rules:
 Common employee header variants recognized by the mapper include `Staff ID`,
 `Employee Name`, `Skills`, `Hourly Rate`, `Pay Rate`, `Weekly Hours Limit`,
 `Max Hours`, compact `Availability`, and explicit `Available Day0 Shift0`
-style availability columns.
+style availability columns. Day-name availability variants such as `Available
+Monday Morning`, `Can Work Tue Evening`, and `Avail Fri Night` are also
+recognized as availability headers for mapping purposes.
 
 ### `shifts.csv`
 

@@ -82,6 +82,33 @@ def test_employee_mapper_supports_additional_header_variants() -> None:
     assert report["mapping"]["availability"]["source_headers"] == ["Avail D0 S0"]
 
 
+def test_employee_mapper_detects_day_name_availability_headers() -> None:
+    report = suggest_employee_column_mapping(
+        [
+            "Staff ID",
+            "Full Name",
+            "Skills",
+            "Hourly Rate",
+            "Weekly Hours Limit",
+            "Available Monday Morning",
+            "Can Work Tue Evening",
+            "Avail Fri Night",
+        ]
+    )
+
+    assert report["valid"] is True
+    assert report["mapping"]["availability"]["source_headers"] == [
+        "Available Monday Morning",
+        "Can Work Tue Evening",
+        "Avail Fri Night",
+    ]
+    assert report["mapping"]["availability"]["normalized_headers"] == [
+        "available_monday_morning",
+        "can_work_tue_evening",
+        "avail_fri_night",
+    ]
+
+
 def test_employee_mapper_supports_compact_availability_with_warning() -> None:
     report = suggest_employee_column_mapping(
         [

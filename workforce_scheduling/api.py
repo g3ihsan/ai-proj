@@ -27,6 +27,9 @@ from .csv_adapter import (
 )
 from .csv_mapper import (
     CSV_MAPPING_CONTRACT_VERSION,
+    CSV_TYPE_DEMAND,
+    CSV_TYPE_EMPLOYEES,
+    CSV_TYPE_SHIFTS,
     CsvMappingValidationError,
     csv_mapping_report,
 )
@@ -595,11 +598,30 @@ async def _json_request_payload(request: Request) -> Any:
 def _csv_mapping_report_from_payload(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise CsvMappingValidationError("CSV mapping request must be an object")
+    if "headers" in payload or "csv_type" in payload:
+        return _single_csv_mapping_report_from_payload(payload)
     return csv_mapping_report(
         employee_headers=_optional_header_list(payload, "employee_headers"),
         demand_headers=_optional_header_list(payload, "demand_headers"),
         shift_headers=_optional_header_list(payload, "shift_headers"),
     )
+
+
+def _single_csv_mapping_report_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    csv_type = payload.get("csv_type")
+    if not isinstance(csv_type, str) or not csv_type.strip():
+        raise CsvMappingValidationError("CSV mapping request csv_type must be a string")
+    csv_type = csv_type.strip()
+    if "headers" not in payload:
+        raise CsvMappingValidationError("CSV mapping request must include headers")
+    headers = payload["headers"]
+    if csv_type == CSV_TYPE_EMPLOYEES:
+        return csv_mapping_report(employee_headers=headers)
+    if csv_type == CSV_TYPE_DEMAND:
+        return csv_mapping_report(demand_headers=headers)
+    if csv_type == CSV_TYPE_SHIFTS:
+        return csv_mapping_report(shift_headers=headers)
+    raise CsvMappingValidationError(f"Unsupported CSV mapping csv_type {csv_type}")
 
 
 def _optional_header_list(payload: dict[str, Any], key: str) -> Any:
