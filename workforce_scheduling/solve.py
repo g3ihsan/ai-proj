@@ -14,6 +14,39 @@ from .data import (
 from .model import ConstraintRecord, build_model
 
 
+ASSIGNED_AVAILABLE = "ASSIGNED_AVAILABLE"
+ASSIGNED_QUALIFIED = "ASSIGNED_QUALIFIED"
+ASSIGNED_WITHIN_HOURS = "ASSIGNED_WITHIN_HOURS"
+ASSIGNED_REST_COMPATIBLE = "ASSIGNED_REST_COMPATIBLE"
+ASSIGNED_COVERED_DEMAND = "ASSIGNED_COVERED_DEMAND"
+ASSIGNED_COST_CONTRIBUTION = "ASSIGNED_COST_CONTRIBUTION"
+BLOCKED_UNAVAILABLE = "BLOCKED_UNAVAILABLE"
+BLOCKED_MISSING_ROLE = "BLOCKED_MISSING_ROLE"
+BLOCKED_MAX_HOURS = "BLOCKED_MAX_HOURS"
+BLOCKED_ONE_SHIFT_PER_DAY = "BLOCKED_ONE_SHIFT_PER_DAY"
+BLOCKED_REST_RULE = "BLOCKED_REST_RULE"
+BLOCKED_CLOSING_TO_OPENING = "BLOCKED_CLOSING_TO_OPENING"
+BLOCKED_MAX_CONSECUTIVE_DAYS = "BLOCKED_MAX_CONSECUTIVE_DAYS"
+BLOCKED_HIGHER_COST_THAN_SELECTED = "BLOCKED_HIGHER_COST_THAN_SELECTED"
+NOT_SELECTED_BY_FINAL_OBJECTIVE = "NOT_SELECTED_BY_FINAL_OBJECTIVE"
+SHORTAGE_INSUFFICIENT_AVAILABLE_QUALIFIED = (
+    "SHORTAGE_INSUFFICIENT_AVAILABLE_QUALIFIED"
+)
+SHORTAGE_REST_CONFLICT = "SHORTAGE_REST_CONFLICT"
+SHORTAGE_MAX_HOURS_LIMIT = "SHORTAGE_MAX_HOURS_LIMIT"
+SHORTAGE_DEMAND_EXCEEDS_CAPACITY = "SHORTAGE_DEMAND_EXCEEDS_CAPACITY"
+
+BLOCKER_REASON_CODE_MAP = {
+    "missing_role": BLOCKED_MISSING_ROLE,
+    "unavailable": BLOCKED_UNAVAILABLE,
+    "already_working_that_day": BLOCKED_ONE_SHIFT_PER_DAY,
+    "violates_minimum_rest": BLOCKED_REST_RULE,
+    "violates_closing_to_opening": BLOCKED_CLOSING_TO_OPENING,
+    "violates_max_consecutive_days": BLOCKED_MAX_CONSECUTIVE_DAYS,
+    "exceeds_weekly_hours": BLOCKED_MAX_HOURS,
+}
+
+
 @dataclass
 class Assignment:
     employee_id: int
@@ -90,6 +123,52 @@ class AssignmentExplanation:
     qualified: bool
     within_weekly_hours: bool
     rest_compatible: bool
+    reason_codes: List[str]
+
+
+@dataclass
+class NonAssignmentExplanation:
+    employee_id: int
+    day: int
+    shift: int
+    role: str
+    assigned_employee_ids: List[int]
+    reason_codes: List[str]
+
+
+@dataclass
+class ShortageExplanation:
+    day: int
+    shift: int
+    role: str
+    required_count: int
+    assigned_count: int
+    shortage_count: int
+    available_qualified_count: int
+    assigned_employee_ids: List[int]
+    blocker_counts: Dict[str, int]
+    reason_codes: List[str]
+
+
+@dataclass
+class ConstraintBlockerSummary:
+    blocker_counts: Dict[str, int]
+    employee_ids_by_reason: Dict[str, List[int]]
+
+
+@dataclass
+class DecisionEvidenceSummary:
+    evidence_contract_version: int
+    source: str
+    status: str
+    assignment_count: int
+    demanded_slot_count: int
+    total_demand: int
+    total_shortage: int
+    objective_priority: List[str]
+    objective_components: Dict[str, int]
+    blocker_counts: Dict[str, int]
+    shortage_reason_codes: List[str]
 
 
 @dataclass
@@ -106,6 +185,10 @@ class SolveResult:
     shortage_diagnostics: List[SlotCandidateAnalysis]
     demanded_slot_diagnostics: List[SlotCandidateAnalysis]
     assignment_explanations: List[AssignmentExplanation]
+    non_assignment_explanations: List[NonAssignmentExplanation]
+    shortage_explanations: List[ShortageExplanation]
+    constraint_blockers: ConstraintBlockerSummary
+    decision_evidence_summary: DecisionEvidenceSummary
 
 
 def solve(
@@ -181,6 +264,24 @@ def solve(
         if diagnostic.shortage_count > 0
     ]
     assignment_explanations = compute_assignment_explanations(data, assignments)
+    non_assignment_explanations = compute_non_assignment_explanations(
+        data,
+        assignments,
+        demanded_slot_diagnostics,
+    )
+    shortage_explanations = compute_shortage_explanations(
+        demanded_slot_diagnostics,
+    )
+    constraint_blockers = compute_constraint_blockers(demanded_slot_diagnostics)
+    decision_evidence_summary = compute_decision_evidence_summary(
+        data,
+        metrics,
+        assignments,
+        demanded_slot_diagnostics,
+        objective_breakdown,
+        constraint_blockers,
+        shortage_explanations,
+    )
     violations = []
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         violations = validate_solution(
@@ -203,6 +304,10 @@ def solve(
         shortage_diagnostics=shortage_diagnostics,
         demanded_slot_diagnostics=demanded_slot_diagnostics,
         assignment_explanations=assignment_explanations,
+        non_assignment_explanations=non_assignment_explanations,
+        shortage_explanations=shortage_explanations,
+        constraint_blockers=constraint_blockers,
+        decision_evidence_summary=decision_evidence_summary,
     )
 
 
@@ -538,10 +643,177 @@ def compute_assignment_explanations(
                     assignment.day,
                     assignment.shift,
                 ),
+                reason_codes=_assignment_reason_codes(
+                    available=(
+                        _is_available(employee, assignment.day, assignment.shift)
+                        and employee.availability[assignment.day][assignment.shift]
+                    ),
+                    qualified=assignment.role in employee.roles,
+                    within_weekly_hours=(
+                        weekly_hours[assignment.employee_id] <= employee.max_weekly_hours
+                    ),
+                    rest_compatible=_minimum_rest_compatible(
+                        data,
+                        employee_assignments_without_current,
+                        assignment.day,
+                        assignment.shift,
+                    ),
+                ),
             )
         )
 
     return explanations
+
+
+def compute_non_assignment_explanations(
+    data: ProblemData,
+    assignments: List[Assignment],
+    demanded_slot_diagnostics: List[SlotCandidateAnalysis],
+) -> List[NonAssignmentExplanation]:
+    assigned_by_employee = _assignments_by_employee(assignments)
+    weekly_hours = _assigned_hours_by_employee(data, assignments)
+    employee_index = {employee.employee_id: employee for employee in data.employees}
+    explanations: List[NonAssignmentExplanation] = []
+
+    for diagnostic in demanded_slot_diagnostics:
+        assigned_employee_ids = set(diagnostic.assigned_employee_ids)
+        selected_costs = [
+            employee_index[employee_id].hourly_cost
+            for employee_id in diagnostic.assigned_employee_ids
+            if employee_id in employee_index
+        ]
+        selected_min_cost = min(selected_costs) if selected_costs else None
+
+        for employee in sorted(data.employees, key=lambda item: item.employee_id):
+            if employee.employee_id in assigned_employee_ids:
+                continue
+            blocker_reasons = _blocking_reasons_for_slot(
+                data,
+                employee,
+                diagnostic.day,
+                diagnostic.shift,
+                diagnostic.role,
+                assigned_by_employee,
+                weekly_hours,
+            )
+            reason_codes = _blocker_reason_codes(blocker_reasons)
+            if (
+                not reason_codes
+                and selected_min_cost is not None
+                and employee.hourly_cost > selected_min_cost
+            ):
+                reason_codes = [BLOCKED_HIGHER_COST_THAN_SELECTED]
+            if not reason_codes:
+                reason_codes = [NOT_SELECTED_BY_FINAL_OBJECTIVE]
+            explanations.append(
+                NonAssignmentExplanation(
+                    employee_id=employee.employee_id,
+                    day=diagnostic.day,
+                    shift=diagnostic.shift,
+                    role=diagnostic.role,
+                    assigned_employee_ids=list(diagnostic.assigned_employee_ids),
+                    reason_codes=reason_codes,
+                )
+            )
+
+    return explanations
+
+
+def compute_shortage_explanations(
+    demanded_slot_diagnostics: List[SlotCandidateAnalysis],
+) -> List[ShortageExplanation]:
+    explanations: List[ShortageExplanation] = []
+    for diagnostic in demanded_slot_diagnostics:
+        if diagnostic.shortage_count <= 0:
+            continue
+        blocker_counts = _mapped_blocker_counts(diagnostic)
+        reason_codes = _shortage_reason_codes(diagnostic, blocker_counts)
+        explanations.append(
+            ShortageExplanation(
+                day=diagnostic.day,
+                shift=diagnostic.shift,
+                role=diagnostic.role,
+                required_count=diagnostic.required_count,
+                assigned_count=diagnostic.assigned_count,
+                shortage_count=diagnostic.shortage_count,
+                available_qualified_count=len(diagnostic.role_available_employee_ids),
+                assigned_employee_ids=list(diagnostic.assigned_employee_ids),
+                blocker_counts=blocker_counts,
+                reason_codes=reason_codes,
+            )
+        )
+    return explanations
+
+
+def compute_constraint_blockers(
+    demanded_slot_diagnostics: List[SlotCandidateAnalysis],
+) -> ConstraintBlockerSummary:
+    counts: Dict[str, int] = {}
+    employee_ids_by_reason: Dict[str, set[int]] = {}
+    for diagnostic in demanded_slot_diagnostics:
+        for lowercase_reason, employee_ids in (
+            diagnostic.blocked_employee_ids_by_reason.items()
+        ):
+            reason_code = BLOCKER_REASON_CODE_MAP[lowercase_reason]
+            counts[reason_code] = counts.get(reason_code, 0) + len(employee_ids)
+            employee_ids_by_reason.setdefault(reason_code, set()).update(employee_ids)
+
+    return ConstraintBlockerSummary(
+        blocker_counts=dict(sorted(counts.items())),
+        employee_ids_by_reason={
+            reason_code: sorted(employee_ids)
+            for reason_code, employee_ids in sorted(employee_ids_by_reason.items())
+        },
+    )
+
+
+def compute_decision_evidence_summary(
+    data: ProblemData,
+    metrics: SolverMetrics,
+    assignments: List[Assignment],
+    demanded_slot_diagnostics: List[SlotCandidateAnalysis],
+    objective_breakdown: ObjectiveBreakdown,
+    constraint_blockers: ConstraintBlockerSummary,
+    shortage_explanations: List[ShortageExplanation],
+) -> DecisionEvidenceSummary:
+    shortage_reason_codes = sorted(
+        {
+            reason_code
+            for explanation in shortage_explanations
+            for reason_code in explanation.reason_codes
+        }
+    )
+    return DecisionEvidenceSummary(
+        evidence_contract_version=1,
+        source="cp_sat_solver_post_solve_evidence",
+        status=metrics.status,
+        assignment_count=len(assignments),
+        demanded_slot_count=len(demanded_slot_diagnostics),
+        total_demand=sum(
+            data.demand[day][shift][role]
+            for day in data.days
+            for shift in range(len(data.shifts))
+            for role in data.roles
+        ),
+        total_shortage=objective_breakdown.total_shortage,
+        objective_priority=[
+            "MINIMIZE_TOTAL_SHORTAGE",
+            "MINIMIZE_FAIRNESS_PENALTY",
+            "MINIMIZE_LABOR_COST",
+        ],
+        objective_components={
+            "shortage_objective_value": (
+                objective_breakdown.shortage_objective_value
+            ),
+            "fairness_objective_value": (
+                objective_breakdown.fairness_objective_value
+            ),
+            "labor_cost_value": objective_breakdown.labor_cost_value,
+            "total_objective_value": objective_breakdown.total_objective_value,
+        },
+        blocker_counts=dict(constraint_blockers.blocker_counts),
+        shortage_reason_codes=shortage_reason_codes,
+    )
 
 
 def _blocking_reasons_for_slot(
@@ -589,6 +861,63 @@ def _blocking_reasons_for_slot(
             reasons.append("exceeds_weekly_hours")
 
     return reasons
+
+
+def _assignment_reason_codes(
+    *,
+    available: bool,
+    qualified: bool,
+    within_weekly_hours: bool,
+    rest_compatible: bool,
+) -> List[str]:
+    reason_codes: List[str] = []
+    if available:
+        reason_codes.append(ASSIGNED_AVAILABLE)
+    if qualified:
+        reason_codes.append(ASSIGNED_QUALIFIED)
+    if within_weekly_hours:
+        reason_codes.append(ASSIGNED_WITHIN_HOURS)
+    if rest_compatible:
+        reason_codes.append(ASSIGNED_REST_COMPATIBLE)
+    reason_codes.append(ASSIGNED_COVERED_DEMAND)
+    reason_codes.append(ASSIGNED_COST_CONTRIBUTION)
+    return reason_codes
+
+
+def _blocker_reason_codes(blocker_reasons: List[str]) -> List[str]:
+    return [
+        BLOCKER_REASON_CODE_MAP[reason]
+        for reason in blocker_reasons
+        if reason in BLOCKER_REASON_CODE_MAP
+    ]
+
+
+def _mapped_blocker_counts(diagnostic: SlotCandidateAnalysis) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for lowercase_reason, employee_ids in diagnostic.blocked_employee_ids_by_reason.items():
+        reason_code = BLOCKER_REASON_CODE_MAP[lowercase_reason]
+        counts[reason_code] = counts.get(reason_code, 0) + len(employee_ids)
+    return dict(sorted(counts.items()))
+
+
+def _shortage_reason_codes(
+    diagnostic: SlotCandidateAnalysis,
+    blocker_counts: Dict[str, int],
+) -> List[str]:
+    reason_codes: List[str] = []
+    available_qualified_count = len(diagnostic.role_available_employee_ids)
+    if available_qualified_count < diagnostic.required_count:
+        reason_codes.append(SHORTAGE_INSUFFICIENT_AVAILABLE_QUALIFIED)
+    if diagnostic.required_count > diagnostic.candidate_employee_count:
+        reason_codes.append(SHORTAGE_DEMAND_EXCEEDS_CAPACITY)
+    if blocker_counts.get(BLOCKED_REST_RULE, 0) or blocker_counts.get(
+        BLOCKED_CLOSING_TO_OPENING,
+        0,
+    ):
+        reason_codes.append(SHORTAGE_REST_CONFLICT)
+    if blocker_counts.get(BLOCKED_MAX_HOURS, 0):
+        reason_codes.append(SHORTAGE_MAX_HOURS_LIMIT)
+    return reason_codes
 
 
 def _assignments_by_slot(

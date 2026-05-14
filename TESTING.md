@@ -28,6 +28,16 @@ keeps the main solve result plus fairness metrics and shortage diagnostics.
 `compact` keeps only core metrics, assignments, shortages, violations, and the
 objective breakdown.
 
+The debug response includes the Solver Evidence Layer. This is deterministic
+post-solve evidence derived from CP-SAT assignments, shortages, diagnostics, and
+objective values. It is intended for future AI explanation tools, but no LLM is
+used by the solver. Future assistants must consume this evidence instead of
+generating schedules directly. Evidence fields include
+`assignment_explanations`, `non_assignment_explanations`,
+`shortage_explanations`, `constraint_blockers`, and
+`decision_evidence_summary`. Compact and standard modes intentionally omit the
+AI-ready evidence fields.
+
 Run a three-file CSV solve:
 
 ```bash

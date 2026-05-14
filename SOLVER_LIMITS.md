@@ -88,6 +88,15 @@ solver and explainability payload, `standard` omits debug-level constraint
 records and demanded-slot/assignment detail, and `compact` returns only core
 metrics, assignments, shortages, violations, and objective breakdown. Response
 mode changes serialization only; it does not change solver decisions.
+The Solver Evidence Layer is included only in debug responses. It formalizes
+post-solve evidence for future AI explanation and recommendation features:
+assignment explanations, non-assignment explanations, shortage explanations,
+constraint blocker summaries, and a decision evidence summary. This evidence is
+computed from the final CP-SAT solution and existing diagnostics after solving.
+It does not add constraints, objectives, heuristics, or alternate scheduling
+behavior. LLMs must treat this evidence as read-only solver output; they must
+not invent assignments, shortages, feasibility status, objective values, or
+blocker reasons.
 
 `workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
 It exposes `GET /health`, `GET /metadata`, `POST /solve`, `POST /solve-csv`,

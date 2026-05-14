@@ -463,6 +463,16 @@ def solve_result_to_payload(
             _assignment_explanation_payload(explanation)
             for explanation in result.assignment_explanations
         ],
+        "non_assignment_explanations": [
+            asdict(explanation)
+            for explanation in result.non_assignment_explanations
+        ],
+        "shortage_explanations": [
+            asdict(explanation)
+            for explanation in result.shortage_explanations
+        ],
+        "constraint_blockers": asdict(result.constraint_blockers),
+        "decision_evidence_summary": asdict(result.decision_evidence_summary),
     }
     return _shape_solve_result_payload(payload, response_mode)
 

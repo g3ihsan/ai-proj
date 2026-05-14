@@ -305,9 +305,93 @@ tests/fixtures/solve_request_small.json
 - `shortage_diagnostics`
 - `demanded_slot_diagnostics`
 - `assignment_explanations`
+- `non_assignment_explanations`
+- `shortage_explanations`
+- `constraint_blockers`
+- `decision_evidence_summary`
 
 Changing `response_mode` changes serialization only. It does not change solver
 decisions.
+
+## Solver Evidence Layer
+
+The Solver Evidence Layer is a debug-mode-only contract for future AI
+explanation, schedule-assistant, and what-if features. It is generated after
+CP-SAT solves from the final assignments, shortages, diagnostics, validation
+facts, and objective breakdown. It does not change the model, objective,
+constraints, warm-start behavior, or selected roster.
+
+LLMs must consume this evidence as read-only source-of-truth context. They must
+not directly generate schedules, feasibility status, shortages, objective
+values, or blocker reasons.
+
+Stable reason codes include:
+
+- `ASSIGNED_AVAILABLE`
+- `ASSIGNED_QUALIFIED`
+- `ASSIGNED_WITHIN_HOURS`
+- `ASSIGNED_REST_COMPATIBLE`
+- `ASSIGNED_COVERED_DEMAND`
+- `ASSIGNED_COST_CONTRIBUTION`
+- `BLOCKED_UNAVAILABLE`
+- `BLOCKED_MISSING_ROLE`
+- `BLOCKED_MAX_HOURS`
+- `BLOCKED_ONE_SHIFT_PER_DAY`
+- `BLOCKED_REST_RULE`
+- `BLOCKED_CLOSING_TO_OPENING`
+- `BLOCKED_MAX_CONSECUTIVE_DAYS`
+- `BLOCKED_HIGHER_COST_THAN_SELECTED`
+- `NOT_SELECTED_BY_FINAL_OBJECTIVE`
+- `SHORTAGE_INSUFFICIENT_AVAILABLE_QUALIFIED`
+- `SHORTAGE_REST_CONFLICT`
+- `SHORTAGE_MAX_HOURS_LIMIT`
+- `SHORTAGE_DEMAND_EXCEEDS_CAPACITY`
+
+Example debug response snippet:
+
+```json
+{
+  "assignment_explanations": [
+    {
+      "employee_id": 0,
+      "day": 0,
+      "shift": 0,
+      "role": "worker",
+      "reason_codes": [
+        "ASSIGNED_AVAILABLE",
+        "ASSIGNED_QUALIFIED",
+        "ASSIGNED_WITHIN_HOURS",
+        "ASSIGNED_REST_COMPATIBLE",
+        "ASSIGNED_COVERED_DEMAND",
+        "ASSIGNED_COST_CONTRIBUTION"
+      ]
+    }
+  ],
+  "shortage_explanations": [
+    {
+      "day": 0,
+      "shift": 0,
+      "role": "worker",
+      "required_count": 3,
+      "assigned_count": 1,
+      "shortage_count": 2,
+      "available_qualified_count": 1,
+      "blocker_counts": {
+        "BLOCKED_MISSING_ROLE": 1,
+        "BLOCKED_UNAVAILABLE": 1
+      }
+    }
+  ],
+  "decision_evidence_summary": {
+    "source": "cp_sat_solver_post_solve_evidence",
+    "objective_priority": [
+      "MINIMIZE_TOTAL_SHORTAGE",
+      "MINIMIZE_FAIRNESS_PENALTY",
+      "MINIMIZE_LABOR_COST"
+    ]
+  }
+}
+```
 
 ## CSV Input Contract
 

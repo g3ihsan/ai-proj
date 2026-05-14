@@ -233,6 +233,64 @@ def _fairness_vs_cost_problem() -> ProblemData:
     )
 
 
+def _evidence_blocker_problem() -> ProblemData:
+    roles = ["worker", "supervisor"]
+    demand = _build_demand(1, 1, roles)
+    demand[0][0]["worker"] = 3
+    employees = [
+        _make_employee(0, ["worker"], [[True]], hourly_cost=10),
+        _make_employee(1, ["worker"], [[False]], hourly_cost=10),
+        _make_employee(2, ["supervisor"], [[True]], hourly_cost=10),
+    ]
+    return _make_problem(
+        employees=employees,
+        roles=roles,
+        shift_start_hours=[8],
+        shift_end_hours=[16],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+
+
+def _max_hours_evidence_problem() -> ProblemData:
+    roles = ["worker"]
+    demand = _build_demand(2, 1, roles, default=1)
+    employees = [
+        _make_employee(0, roles, [[True], [True]], max_weekly_hours=8),
+        _make_employee(1, roles, [[False], [True]], max_weekly_hours=8),
+    ]
+    return _make_problem(
+        employees=employees,
+        roles=roles,
+        shift_start_hours=[8],
+        shift_end_hours=[16],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+
+
+def _rest_evidence_problem() -> ProblemData:
+    roles = ["worker"]
+    demand = _build_demand(2, 2, roles)
+    demand[0][1]["worker"] = 1
+    demand[1][0]["worker"] = 1
+    employees = [
+        _make_employee(0, roles, [[False, True], [True, False]]),
+        _make_employee(1, roles, [[False, False], [True, False]]),
+    ]
+    return _make_problem(
+        employees=employees,
+        roles=roles,
+        shift_start_hours=[8, 20],
+        shift_end_hours=[16, 4],
+        demand=demand,
+        min_rest_hours=10,
+        max_consecutive_days=5,
+    )
+
+
 def _assert_objective_total_matches_components(
     breakdown: ObjectiveBreakdown,
 ) -> None:
@@ -491,6 +549,26 @@ def _assert_diagnostics_consistent(
                 set(diagnostic.assigned_employee_ids) & set(blocked_employee_ids)
             ), reason
         assert all_reported_ids <= employee_ids
+
+
+def _non_assignment_reason_codes(
+    result: SolveResult,
+    employee_id: int,
+    day: int,
+    shift: int,
+    role: str,
+) -> List[str]:
+    for explanation in result.non_assignment_explanations:
+        if (
+            explanation.employee_id == employee_id
+            and explanation.day == day
+            and explanation.shift == shift
+            and explanation.role == role
+        ):
+            return explanation.reason_codes
+    raise AssertionError(
+        f"Missing non-assignment explanation for {(employee_id, day, shift, role)}"
+    )
 
 
 def _brute_force_best_priority(
@@ -1037,6 +1115,127 @@ def test_solve_response_schema_is_json_safe_and_preserves_solver_components() ->
         {"employee_id": 0, "shift": 0, "assignment_count": 1},
         {"employee_id": 1, "shift": 0, "assignment_count": 1},
     ]
+    assert "non_assignment_explanations" in encoded_payload
+    assert "shortage_explanations" in encoded_payload
+    assert "constraint_blockers" in encoded_payload
+    assert "decision_evidence_summary" in encoded_payload
+
+
+def test_assignment_evidence_includes_positive_reason_codes() -> None:
+    result = solve(_small_fully_feasible_problem(), time_limit_sec=5.0, seed=1)
+
+    assert result.assignment_explanations
+    for explanation in result.assignment_explanations:
+        assert {
+            "ASSIGNED_AVAILABLE",
+            "ASSIGNED_QUALIFIED",
+            "ASSIGNED_WITHIN_HOURS",
+            "ASSIGNED_REST_COMPATIBLE",
+            "ASSIGNED_COVERED_DEMAND",
+            "ASSIGNED_COST_CONTRIBUTION",
+        }.issubset(explanation.reason_codes)
+
+
+def test_non_assignment_evidence_maps_unavailable_and_missing_role_blockers() -> None:
+    result = solve(_evidence_blocker_problem(), time_limit_sec=5.0, seed=1)
+
+    assert "BLOCKED_UNAVAILABLE" in _non_assignment_reason_codes(
+        result,
+        1,
+        0,
+        0,
+        "worker",
+    )
+    assert "BLOCKED_MISSING_ROLE" in _non_assignment_reason_codes(
+        result,
+        2,
+        0,
+        0,
+        "worker",
+    )
+
+
+def test_non_assignment_evidence_maps_max_hours_blocker() -> None:
+    result = solve(_max_hours_evidence_problem(), time_limit_sec=5.0, seed=1)
+
+    assert result.metrics.status == "OPTIMAL"
+    assert any(
+        assignment.employee_id == 0 and assignment.day == 0
+        for assignment in result.assignments
+    )
+    assert "BLOCKED_MAX_HOURS" in _non_assignment_reason_codes(
+        result,
+        0,
+        1,
+        0,
+        "worker",
+    )
+
+
+def test_non_assignment_evidence_maps_rest_rule_blocker() -> None:
+    result = solve(_rest_evidence_problem(), time_limit_sec=5.0, seed=1)
+
+    assert result.metrics.status == "OPTIMAL"
+    assert any(
+        assignment.employee_id == 0 and assignment.day == 0 and assignment.shift == 1
+        for assignment in result.assignments
+    )
+    assert "BLOCKED_REST_RULE" in _non_assignment_reason_codes(
+        result,
+        0,
+        1,
+        0,
+        "worker",
+    )
+
+
+def test_shortage_evidence_includes_counts_and_blocker_summary() -> None:
+    result = solve(_evidence_blocker_problem(), time_limit_sec=5.0, seed=1)
+
+    assert result.objective_breakdown.total_shortage == 2
+    assert len(result.shortage_explanations) == 1
+    explanation = result.shortage_explanations[0]
+    assert explanation.day == 0
+    assert explanation.shift == 0
+    assert explanation.role == "worker"
+    assert explanation.required_count == 3
+    assert explanation.assigned_count == 1
+    assert explanation.shortage_count == 2
+    assert explanation.available_qualified_count == 1
+    assert explanation.blocker_counts["BLOCKED_UNAVAILABLE"] == 1
+    assert explanation.blocker_counts["BLOCKED_MISSING_ROLE"] == 1
+    assert "SHORTAGE_INSUFFICIENT_AVAILABLE_QUALIFIED" in explanation.reason_codes
+    assert result.constraint_blockers.blocker_counts["BLOCKED_UNAVAILABLE"] == 1
+    assert result.constraint_blockers.employee_ids_by_reason[
+        "BLOCKED_MISSING_ROLE"
+    ] == [2]
+
+
+def test_solver_evidence_is_deterministic_for_same_seed() -> None:
+    data = _evidence_blocker_problem()
+    result_a = solve(data, time_limit_sec=5.0, seed=11)
+    result_b = solve(data, time_limit_sec=5.0, seed=11)
+    payload_a = solve_result_to_payload(result_a, response_mode=RESPONSE_MODE_DEBUG)
+    payload_b = solve_result_to_payload(result_b, response_mode=RESPONSE_MODE_DEBUG)
+
+    for field in (
+        "assignment_explanations",
+        "non_assignment_explanations",
+        "shortage_explanations",
+        "constraint_blockers",
+        "decision_evidence_summary",
+    ):
+        assert payload_a[field] == payload_b[field]
+
+
+def test_non_assignment_evidence_always_has_reason_codes() -> None:
+    result = solve(_small_fully_feasible_problem(), time_limit_sec=5.0, seed=1)
+
+    assert result.non_assignment_explanations
+    assert all(
+        explanation.reason_codes
+        for explanation in result.non_assignment_explanations
+    )
 
 
 def test_solve_payload_response_modes_shape_result_without_changing_solution() -> None:
@@ -1089,6 +1288,18 @@ def test_solve_payload_response_modes_shape_result_without_changing_solution() -
     assert "shortage_diagnostics" in debug
     assert "demanded_slot_diagnostics" in debug
     assert "assignment_explanations" in debug
+    assert "non_assignment_explanations" not in compact
+    assert "shortage_explanations" not in compact
+    assert "constraint_blockers" not in compact
+    assert "decision_evidence_summary" not in compact
+    assert "non_assignment_explanations" not in standard
+    assert "shortage_explanations" not in standard
+    assert "constraint_blockers" not in standard
+    assert "decision_evidence_summary" not in standard
+    assert "non_assignment_explanations" in debug
+    assert "shortage_explanations" in debug
+    assert "constraint_blockers" in debug
+    assert "decision_evidence_summary" in debug
 
 
 def test_solve_payload_boundary_matches_direct_solver_output() -> None:
