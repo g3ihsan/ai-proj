@@ -331,6 +331,23 @@ Request:
 }
 ```
 
+Recommendation request with limits:
+
+```json
+{
+  "question": "What should I change to reduce shortages?",
+  "solve_request": {
+    "schema_version": 1,
+    "problem": {},
+    "options": {}
+  },
+  "limits": {
+    "max_scenarios": 5,
+    "max_recommendations": 1
+  }
+}
+```
+
 Supported routed intents:
 
 - `summary`
@@ -353,13 +370,19 @@ Recommendation questions must still be shortage-fix or what-if questions for
 the currently supported `reduce_shortages` goal. They do not generate rosters or
 invent scenario changes; `/assistant/ask` routes them to the same deterministic
 engine used by `POST /recommendations` and returns that payload in
-`recommendation`.
+`recommendation`. `limits.max_scenarios` and `limits.max_recommendations` are
+passed through to the recommendation engine and validated there.
 
 If the question is unsupported or lacks required target fields, the endpoint
 returns `ok=true` with `status=unsupported` and no narration. Request-shape
 errors return `AssistantIntentError`. Assistant responses include both
 `message` and `answer`; these fields contain the same text so future clients can
 use `answer` without breaking older clients that read `message`.
+
+Recommendation errors preserve the same HTTP semantics as
+`POST /recommendations`: `RecommendationError` and `ScenarioValidationError`
+return HTTP 400, `ScenarioEvaluationError` returns HTTP 500, schema validation
+errors return HTTP 400, and oversized JSON requests return HTTP 413.
 
 ### `POST /recommendations`
 

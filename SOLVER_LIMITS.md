@@ -117,8 +117,12 @@ detection, does not perform fuzzy or substring employee-name matching, and
 returns an unsupported response rather than guessing missing assignment,
 employee, or shift targets. Recommendation answers summarize the returned
 scenario comparison payload only; they do not invent changes or generate
-rosters. Explicit request targets override text-derived targets to keep
-caller-provided structured intent authoritative.
+rosters. Assistant recommendation limits are passed to the existing
+recommendation engine so capping and validation remain centralized at the
+deterministic scenario boundary. Recommendation errors keep the same HTTP
+status semantics through `/assistant/ask` as they do through
+`/recommendations`. Explicit request targets override text-derived targets to
+keep caller-provided structured intent authoritative.
 The recommendation engine in `workforce_scheduling.recommendations` is also
 deterministic. The current goal is limited to `reduce_shortages`; it evaluates
 small availability-change scenarios for qualified unavailable employees on

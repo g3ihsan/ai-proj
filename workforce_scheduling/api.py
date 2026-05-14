@@ -372,6 +372,8 @@ async def assistant_ask_endpoint(request: Request) -> JSONResponse:
         status_code = 404
     if _error_type(response_payload) == "NarrationProviderError":
         status_code = 502
+    if _error_type(response_payload) == "ScenarioEvaluationError":
+        status_code = 500
     _log_solve_route(request, "assistant_ask", response_payload, status_code)
     return JSONResponse(content=response_payload, status_code=status_code)
 

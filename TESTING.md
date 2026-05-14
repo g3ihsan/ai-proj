@@ -169,7 +169,13 @@ plus exact case-insensitive employee name matches when one employee in the solve
 request matches. Name matching is exact phrase matching, not substring or fuzzy
 matching. It does not use an LLM for routing and does not generate schedules.
 For recommendation intents, it calls the deterministic scenario recommendation
-engine and summarizes the returned comparison payload. Explicit `target` fields
+engine and summarizes the returned comparison payload. Assistant recommendation
+requests may include `limits.max_scenarios` and `limits.max_recommendations`;
+those limits pass through to the same validation and capping path used by
+`POST /recommendations`. Recommendation errors preserve recommendation endpoint
+HTTP semantics through `/assistant/ask`: recommendation and scenario validation
+errors return 400, scenario evaluation failures return 500, schema errors
+return 400, and oversized JSON requests return 413. Explicit `target` fields
 override fields parsed from the question text. Assistant responses include both
 `message` and `answer` with the same text. Unsupported or under-specified
 questions return `ok=true` with `status=unsupported` and no narration.

@@ -29,7 +29,10 @@ from workforce_scheduling.jobs import (
     SOLVE_JOB_MAX_WORKERS,
     solve_job_executor,
 )
-from workforce_scheduling.recommendations import ScenarioEvaluationError
+from workforce_scheduling.recommendations import (
+    ScenarioEvaluationError,
+    ScenarioValidationError,
+)
 
 
 def _api_request(
@@ -178,6 +181,49 @@ def _shortage_reduction_solve_request() -> Dict[str, object]:
     request_payload["problem"]["days"] = [0]
     request_payload["problem"]["demand"] = [
         {"day": 0, "shift": 0, "role": "worker", "required": 2}
+    ]
+    return request_payload
+
+
+def _multi_recommendation_solve_request() -> Dict[str, object]:
+    request_payload = _small_solve_request()
+    request_payload["problem"]["employees"] = [
+        {
+            "employee_id": 0,
+            "name": "E0",
+            "roles": ["worker"],
+            "hourly_cost": 20,
+            "max_weekly_hours": 40,
+            "availability": [[True]],
+        },
+        {
+            "employee_id": 1,
+            "name": "E1",
+            "roles": ["worker"],
+            "hourly_cost": 20,
+            "max_weekly_hours": 40,
+            "availability": [[False]],
+        },
+        {
+            "employee_id": 2,
+            "name": "E2",
+            "roles": ["worker"],
+            "hourly_cost": 20,
+            "max_weekly_hours": 40,
+            "availability": [[False]],
+        },
+        {
+            "employee_id": 3,
+            "name": "E3",
+            "roles": ["worker"],
+            "hourly_cost": 20,
+            "max_weekly_hours": 40,
+            "availability": [[False]],
+        },
+    ]
+    request_payload["problem"]["days"] = [0]
+    request_payload["problem"]["demand"] = [
+        {"day": 0, "shift": 0, "role": "worker", "required": 4}
     ]
     return request_payload
 
@@ -1024,6 +1070,40 @@ def test_api_assistant_ask_routes_recommendation_question() -> None:
     json.dumps(response_payload, sort_keys=True)
 
 
+def test_api_assistant_recommendations_passes_limits_to_engine() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "What should I change to reduce shortages?",
+            "solve_request": _multi_recommendation_solve_request(),
+            "limits": {
+                "max_scenarios": 3,
+                "max_recommendations": 1,
+            },
+        },
+    )
+    result_payload = response.json()["result"]
+    recommendation_payload = result_payload["recommendation"]
+
+    assert response.status_code == 200
+    assert result_payload["intent"]["kind"] == "recommendations"
+    assert recommendation_payload["limits"] == {
+        "max_scenarios": 3,
+        "max_recommendations": 1,
+        "scenario_limit_reached": False,
+        "recommendation_limit_reached": True,
+    }
+    assert recommendation_payload["summary"]["generated_scenario_count"] == 3
+    assert recommendation_payload["summary"]["generated_recommendation_count"] == 3
+    assert recommendation_payload["summary"]["recommendation_count"] == 1
+    assert recommendation_payload["summary"]["discarded_recommendation_count"] == 2
+    assert [
+        item["reason"]
+        for item in recommendation_payload["discarded_recommendations"]
+    ] == ["MAX_RECOMMENDATION_LIMIT", "MAX_RECOMMENDATION_LIMIT"]
+
+
 def test_api_assistant_ask_routes_employee_question() -> None:
     response = _api_request(
         "POST",
@@ -1233,6 +1313,96 @@ def test_api_assistant_ask_preserves_target_not_found_error() -> None:
     assert response.status_code == 404
     assert response_payload["ok"] is False
     assert response_payload["error"]["type"] == "ExplanationTargetNotFoundError"
+
+
+def test_api_assistant_recommendations_rejects_invalid_limits() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "What should I change to reduce shortages?",
+            "solve_request": _shortage_reduction_solve_request(),
+            "limits": {
+                "max_scenarios": 1,
+                "max_recommendations": 6,
+            },
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "RecommendationError"
+
+
+def test_api_assistant_recommendations_preserves_schema_error() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "What should I change to reduce shortages?",
+            "solve_request": {"options": {"seed": 1}},
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "SchemaValidationError"
+
+
+def test_api_assistant_recommendations_maps_scenario_validation_error_to_400(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_scenario_validation(_payload):
+        raise ScenarioValidationError("invalid scenario")
+
+    monkeypatch.setattr(
+        api_module,
+        "assistant_response_from_request",
+        _raise_scenario_validation,
+    )
+
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "What should I change to reduce shortages?",
+            "solve_request": _shortage_reduction_solve_request(),
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ScenarioValidationError"
+
+
+def test_api_assistant_recommendations_maps_scenario_evaluation_error_to_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_scenario_failure(_payload):
+        raise ScenarioEvaluationError("scenario solve failed")
+
+    monkeypatch.setattr(
+        api_module,
+        "assistant_response_from_request",
+        _raise_scenario_failure,
+    )
+
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "What should I change to reduce shortages?",
+            "solve_request": _shortage_reduction_solve_request(),
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 500
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ScenarioEvaluationError"
 
 
 def test_api_assistant_ask_is_deterministic_and_json_serializable() -> None:
@@ -1862,6 +2032,25 @@ def test_api_json_routes_reject_large_request_body() -> None:
     response = _api_request(
         "POST",
         "/solve",
+        content=" " * (MAX_JSON_REQUEST_BYTES + 1),
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {
+        "ok": False,
+        "error": {
+            "type": "RequestTooLargeError",
+            "message": f"JSON request body exceeds {MAX_JSON_REQUEST_BYTES} bytes",
+            "request_id": response.headers["x-request-id"],
+        },
+    }
+
+
+def test_api_assistant_rejects_large_request_body() -> None:
+    response = _api_request(
+        "POST",
+        "/assistant/ask",
         content=" " * (MAX_JSON_REQUEST_BYTES + 1),
         headers={"content-type": "application/json"},
     )
