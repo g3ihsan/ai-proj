@@ -136,8 +136,10 @@ return manager-readable explanation payloads in the normal envelope:
 decisions. Detail endpoints accept `{"solve_request": ..., "target": ...}`.
 For example, `/explain/assignment` target fields are `employee_id`, `day`,
 `shift`, and `role`. Assignment explanations cover both assigned and
-non-assigned cases. Invalid target shapes return `ExplanationQueryError`; valid
-targets with no matching evidence return `ExplanationTargetNotFoundError`.
+non-assigned cases. `/explain/shift` accepts `day` and `shift`, with optional
+`role` filtering for one demanded role. Invalid target shapes return
+`ExplanationQueryError`; valid targets with no matching evidence return
+`ExplanationTargetNotFoundError`.
 
 Run benchmark fixtures:
 

@@ -112,6 +112,78 @@ def _csv_upload_files() -> Dict[str, tuple[str, str, str]]:
     }
 
 
+def _small_solve_request() -> Dict[str, object]:
+    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
+    return json.loads(fixture_path.read_text())
+
+
+def _non_demanded_shift_solve_request() -> Dict[str, object]:
+    request_payload = _small_solve_request()
+    request_payload["problem"]["demand"] = [
+        {"day": 0, "shift": 0, "role": "worker", "required": 1}
+    ]
+    return request_payload
+
+
+def _multi_role_shift_solve_request() -> Dict[str, object]:
+    request_payload = _small_solve_request()
+    request_payload["problem"]["employees"] = [
+        {
+            "employee_id": 0,
+            "name": "E0",
+            "roles": ["worker"],
+            "hourly_cost": 20,
+            "max_weekly_hours": 40,
+            "availability": [[True], [True]],
+        },
+        {
+            "employee_id": 1,
+            "name": "E1",
+            "roles": ["supervisor"],
+            "hourly_cost": 20,
+            "max_weekly_hours": 40,
+            "availability": [[True], [True]],
+        },
+    ]
+    request_payload["problem"]["roles"] = ["worker", "supervisor"]
+    request_payload["problem"]["demand"] = [
+        {"day": 0, "shift": 0, "role": "worker", "required": 1},
+        {"day": 0, "shift": 0, "role": "supervisor", "required": 1},
+    ]
+    return request_payload
+
+
+def _explanation_request(
+    request_payload: Dict[str, object],
+    target: Dict[str, object],
+) -> Dict[str, object]:
+    return {"solve_request": request_payload, "target": target}
+
+
+def _assert_query_error(response: httpx.Response, message: str) -> None:
+    response_payload = response.json()
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"] == {
+        "type": "ExplanationQueryError",
+        "message": message,
+        "request_id": response.headers["x-request-id"],
+    }
+
+
+def _stable_solve_output(result_payload: Dict[str, object]) -> Dict[str, object]:
+    metrics = dict(result_payload["metrics"])
+    # Wall time is intentionally operational telemetry, not deterministic
+    # solver output. The remaining metrics are stable for this tiny fixture.
+    metrics.pop("wall_time_sec", None)
+    return {
+        "assignments": result_payload["assignments"],
+        "shortages": result_payload["shortages"],
+        "objective_breakdown": result_payload["objective_breakdown"],
+        "metrics": metrics,
+    }
+
+
 def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
     response = _api_request("GET", "/metadata")
 
@@ -263,8 +335,7 @@ def test_api_preserves_incoming_request_id() -> None:
 
 
 def test_api_explain_summary_returns_deterministic_explanation() -> None:
-    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
-    request_payload = json.loads(fixture_path.read_text())
+    request_payload = _small_solve_request()
     request_payload["options"]["response_mode"] = "compact"
 
     response = _api_request("POST", "/explain/summary", json_payload=request_payload)
@@ -283,22 +354,39 @@ def test_api_explain_summary_returns_deterministic_explanation() -> None:
     assert result_payload["details"]["objective_breakdown"]["total_shortage"] == 0
 
 
+def test_api_explain_shortages_returns_contract_payload() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/shortages",
+        json_payload=_small_solve_request(),
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["type"] == "shortage_explanations"
+    assert result_payload["evidence_contract_version"] == 1
+    assert "shortages" in result_payload["details"]
+    assert "total_shortage" in result_payload["details"]
+    assert result_payload["details"]["total_shortage"] == 0
+
+
 def test_api_explain_assignment_uses_targeted_evidence() -> None:
-    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
-    request_payload = json.loads(fixture_path.read_text())
+    request_payload = _small_solve_request()
 
     response = _api_request(
         "POST",
         "/explain/assignment",
-        json_payload={
-            "solve_request": request_payload,
-            "target": {
+        json_payload=_explanation_request(
+            request_payload,
+            {
                 "employee_id": 0,
                 "day": 0,
                 "shift": 0,
                 "role": "worker",
             },
-        },
+        ),
     )
     result_payload = response.json()["result"]
 
@@ -314,21 +402,20 @@ def test_api_explain_assignment_uses_targeted_evidence() -> None:
 
 
 def test_api_explain_assignment_returns_non_assignment_explanation() -> None:
-    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
-    request_payload = json.loads(fixture_path.read_text())
+    request_payload = _small_solve_request()
 
     response = _api_request(
         "POST",
         "/explain/assignment",
-        json_payload={
-            "solve_request": request_payload,
-            "target": {
+        json_payload=_explanation_request(
+            request_payload,
+            {
                 "employee_id": 1,
                 "day": 0,
                 "shift": 0,
                 "role": "worker",
             },
-        },
+        ),
     )
     result_payload = response.json()["result"]
 
@@ -339,22 +426,163 @@ def test_api_explain_assignment_returns_non_assignment_explanation() -> None:
     assert result_payload["details"]["assigned_employee_ids"] == [0]
 
 
+def test_api_explain_employee_returns_contract_payload() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/employee",
+        json_payload=_explanation_request(
+            _small_solve_request(),
+            {"employee_id": 0},
+        ),
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["type"] == "employee_explanation"
+    assert result_payload["evidence_contract_version"] == 1
+    assert result_payload["details"]["employee_id"] == 0
+    assert "assignments" in result_payload["details"]
+    assert "non_assignments" in result_payload["details"]
+    assert result_payload["details"]["assignments"]
+
+
+def test_api_explain_shift_returns_contract_payload() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/shift",
+        json_payload=_explanation_request(
+            _small_solve_request(),
+            {"day": 0, "shift": 0},
+        ),
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["type"] == "shift_explanation"
+    assert result_payload["evidence_contract_version"] == 1
+    assert result_payload["details"]["day"] == 0
+    assert result_payload["details"]["shift"] == 0
+    assert "demanded_slots" in result_payload["details"]
+    assert "assignments" in result_payload["details"]
+    assert "non_assignments" in result_payload["details"]
+    assert "shortages" in result_payload["details"]
+
+
+def test_api_explain_shift_supports_optional_role_filter() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/shift",
+        json_payload=_explanation_request(
+            _multi_role_shift_solve_request(),
+            {"day": 0, "shift": 0, "role": "worker"},
+        ),
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["details"]["role"] == "worker"
+    assert {
+        slot["role"]
+        for slot in result_payload["details"]["demanded_slots"]
+    } == {"worker"}
+    assert {
+        assignment["role"]
+        for assignment in result_payload["details"]["assignments"]
+    } <= {"worker"}
+    assert {
+        non_assignment["role"]
+        for non_assignment in result_payload["details"]["non_assignments"]
+    } <= {"worker"}
+
+
+def test_api_explanation_endpoints_return_json_serializable_payloads() -> None:
+    request_payload = _small_solve_request()
+    endpoint_payloads = [
+        ("/explain/summary", request_payload),
+        ("/explain/shortages", request_payload),
+        (
+            "/explain/assignment",
+            _explanation_request(
+                request_payload,
+                {"employee_id": 0, "day": 0, "shift": 0, "role": "worker"},
+            ),
+        ),
+        (
+            "/explain/employee",
+            _explanation_request(request_payload, {"employee_id": 0}),
+        ),
+        (
+            "/explain/shift",
+            _explanation_request(request_payload, {"day": 0, "shift": 0}),
+        ),
+    ]
+
+    for endpoint, payload in endpoint_payloads:
+        response = _api_request("POST", endpoint, json_payload=payload)
+
+        assert response.status_code == 200, endpoint
+        json.dumps(response.json(), sort_keys=True)
+
+
+def test_api_explanation_endpoints_are_deterministic_for_same_request() -> None:
+    request_payload = _small_solve_request()
+    endpoint_payloads = [
+        ("/explain/summary", request_payload),
+        (
+            "/explain/employee",
+            _explanation_request(request_payload, {"employee_id": 0}),
+        ),
+        (
+            "/explain/shift",
+            _explanation_request(request_payload, {"day": 0, "shift": 0}),
+        ),
+    ]
+
+    for endpoint, payload in endpoint_payloads:
+        first = _api_request("POST", endpoint, json_payload=payload).json()
+        second = _api_request("POST", endpoint, json_payload=payload).json()
+
+        assert first == second, endpoint
+
+
+def test_api_explanation_endpoints_do_not_change_debug_solve_output() -> None:
+    request_payload = _small_solve_request()
+
+    before = _api_request("POST", "/solve", json_payload=request_payload).json()
+    explain_response = _api_request(
+        "POST",
+        "/explain/employee",
+        json_payload=_explanation_request(request_payload, {"employee_id": 0}),
+    ).json()
+    after = _api_request("POST", "/solve", json_payload=request_payload).json()
+
+    assert before["ok"] is True
+    assert explain_response["ok"] is True
+    assert after["ok"] is True
+    assert _stable_solve_output(before["result"]) == _stable_solve_output(
+        after["result"]
+    )
+
+
 def test_api_explain_assignment_returns_404_for_missing_target() -> None:
-    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
-    request_payload = json.loads(fixture_path.read_text())
+    request_payload = _small_solve_request()
 
     response = _api_request(
         "POST",
         "/explain/assignment",
-        json_payload={
-            "solve_request": request_payload,
-            "target": {
+        json_payload=_explanation_request(
+            request_payload,
+            {
                 "employee_id": 99,
                 "day": 0,
                 "shift": 0,
                 "role": "worker",
             },
-        },
+        ),
     )
     response_payload = response.json()
 
@@ -364,49 +592,74 @@ def test_api_explain_assignment_returns_404_for_missing_target() -> None:
     assert response_payload["error"]["request_id"] == response.headers["x-request-id"]
 
 
+def test_api_explain_employee_returns_404_for_unknown_employee() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/employee",
+        json_payload=_explanation_request(
+            _small_solve_request(),
+            {"employee_id": 99},
+        ),
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 404
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ExplanationTargetNotFoundError"
+
+
+def test_api_explain_shift_returns_404_for_valid_non_demanded_shift() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/shift",
+        json_payload=_explanation_request(
+            _non_demanded_shift_solve_request(),
+            {"day": 1, "shift": 0},
+        ),
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 404
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ExplanationTargetNotFoundError"
+
+
 def test_api_explain_assignment_returns_query_error_for_bad_target() -> None:
-    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
-    request_payload = json.loads(fixture_path.read_text())
+    request_payload = _small_solve_request()
 
     response = _api_request(
         "POST",
         "/explain/assignment",
-        json_payload={
-            "solve_request": request_payload,
-            "target": {
+        json_payload=_explanation_request(
+            request_payload,
+            {
                 "employee_id": "not-an-int",
                 "day": 0,
                 "shift": 0,
                 "role": "worker",
             },
-        },
+        ),
     )
-    response_payload = response.json()
-
-    assert response.status_code == 400
-    assert response_payload["ok"] is False
-    assert response_payload["error"] == {
-        "type": "ExplanationQueryError",
-        "message": "Explanation target field employee_id must be an integer",
-        "request_id": response.headers["x-request-id"],
-    }
+    _assert_query_error(
+        response,
+        "Explanation target field employee_id must be an integer",
+    )
 
 
 def test_api_explain_assignment_returns_query_error_for_missing_role() -> None:
-    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
-    request_payload = json.loads(fixture_path.read_text())
+    request_payload = _small_solve_request()
 
     response = _api_request(
         "POST",
         "/explain/assignment",
-        json_payload={
-            "solve_request": request_payload,
-            "target": {
+        json_payload=_explanation_request(
+            request_payload,
+            {
                 "employee_id": 0,
                 "day": 0,
                 "shift": 0,
             },
-        },
+        ),
     )
     response_payload = response.json()
 
@@ -416,6 +669,44 @@ def test_api_explain_assignment_returns_query_error_for_missing_role() -> None:
     assert response_payload["error"]["message"] == (
         "Missing explanation target field(s): role"
     )
+
+
+@pytest.mark.parametrize(
+    ("target", "message"),
+    [
+        ("not-an-object", "Explanation target must be an object"),
+        (
+            {"employee_id": True, "day": 0, "shift": 0, "role": "worker"},
+            "Explanation target field employee_id must be an integer",
+        ),
+        (
+            {"employee_id": 0, "day": "not-an-int", "shift": 0, "role": "worker"},
+            "Explanation target field day must be an integer",
+        ),
+        (
+            {"employee_id": 0, "day": 0, "shift": "not-an-int", "role": "worker"},
+            "Explanation target field shift must be an integer",
+        ),
+        (
+            {"employee_id": 0, "day": 0, "shift": 0, "role": ""},
+            "Explanation target field role must be a non-empty string",
+        ),
+    ],
+)
+def test_api_explain_assignment_validates_target_shape(
+    target: object,
+    message: str,
+) -> None:
+    response = _api_request(
+        "POST",
+        "/explain/assignment",
+        json_payload={
+            "solve_request": _small_solve_request(),
+            "target": target,
+        },
+    )
+
+    _assert_query_error(response, message)
 
 
 def test_solve_job_executor_is_bounded() -> None:
