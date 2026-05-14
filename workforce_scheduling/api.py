@@ -48,7 +48,9 @@ from .jobs import (
 )
 from .recommendations import (
     MAX_RECOMMENDATION_SCENARIOS,
+    RECOMMENDATION_CONTRACT_VERSION,
     SUPPORTED_RECOMMENDATION_GOALS,
+    SUPPORTED_SCENARIO_TYPES,
     recommendation_response_from_request,
 )
 from .schemas import (
@@ -238,8 +240,10 @@ async def metadata() -> dict[str, Any]:
         },
         "recommendation_engine": {
             "source": "Deterministic scenario solves",
+            "recommendation_contract_version": RECOMMENDATION_CONTRACT_VERSION,
             "uses_external_llm": False,
             "supported_goals": list(SUPPORTED_RECOMMENDATION_GOALS),
+            "supported_scenario_types": list(SUPPORTED_SCENARIO_TYPES),
             "max_scenarios": MAX_RECOMMENDATION_SCENARIOS,
             "response_shape": {
                 "ok": True,

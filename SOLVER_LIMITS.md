@@ -119,10 +119,12 @@ structured intent authoritative.
 The recommendation engine in `workforce_scheduling.recommendations` is also
 deterministic. The current goal is limited to `reduce_shortages`; it evaluates
 small availability-change scenarios for qualified unavailable employees on
-shortage slots and re-solves with the existing CP-SAT model. It is capped at 5
-scenarios per request in the in-process prototype. Recommendations are
-decision-support evidence, not automatic roster edits, and they do not add
-objectives, constraints, forecasting, or LLM-generated schedule changes.
+shortage slots and re-solves with the existing CP-SAT model. The recommendation
+contract version is `1`, and the only current scenario type is
+`set_availability`. It is capped at 5 scenarios per request in the in-process
+prototype. Recommendations are decision-support evidence, not automatic roster
+edits, and they do not add objectives, constraints, forecasting, or
+LLM-generated schedule changes.
 The current evidence contract version is `1`. Public evidence uses stable
 uppercase reason codes. Internal lowercase blocker names are deliberately mapped
 to those public codes; unknown internal blocker names should fail tests instead

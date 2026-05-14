@@ -309,8 +309,10 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
         },
         "recommendation_engine": {
             "source": "Deterministic scenario solves",
+            "recommendation_contract_version": 1,
             "uses_external_llm": False,
             "supported_goals": ["reduce_shortages"],
+            "supported_scenario_types": ["set_availability"],
             "max_scenarios": 5,
             "response_shape": {
                 "ok": True,
@@ -1231,6 +1233,7 @@ def test_api_recommendations_returns_grounded_shortage_reduction() -> None:
     assert response.status_code == 200
     assert response_payload["ok"] is True
     assert result_payload["type"] == "scenario_recommendations"
+    assert result_payload["recommendation_contract_version"] == 1
     assert result_payload["goal"] == "reduce_shortages"
     assert result_payload["baseline"]["total_shortage"] == 1
     assert result_payload["summary"]["recommendation_count"] == 1
@@ -1247,6 +1250,9 @@ def test_api_recommendations_returns_grounded_shortage_reduction() -> None:
         }
     ]
     assert result_payload["metadata"]["uses_external_llm"] is False
+    assert result_payload["metadata"]["supported_scenario_types"] == [
+        "set_availability"
+    ]
     json.dumps(response_payload, sort_keys=True)
 
 
@@ -1278,6 +1284,42 @@ def test_api_recommendations_rejects_invalid_request() -> None:
             "goal": "balance_weekends",
             "solve_request": _small_solve_request(),
         },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "RecommendationError"
+
+
+@pytest.mark.parametrize(
+    "json_payload",
+    [
+        {"goal": "reduce_shortages"},
+        {
+            "goal": "reduce_shortages",
+            "solve_request": _small_solve_request(),
+            "max_scenarios": True,
+        },
+        {
+            "goal": "reduce_shortages",
+            "solve_request": _small_solve_request(),
+            "max_scenarios": 0,
+        },
+        {
+            "goal": "reduce_shortages",
+            "solve_request": _small_solve_request(),
+            "max_scenarios": 6,
+        },
+    ],
+)
+def test_api_recommendations_rejects_invalid_contract_inputs(
+    json_payload: Dict[str, object],
+) -> None:
+    response = _api_request(
+        "POST",
+        "/recommend/what-if",
+        json_payload=json_payload,
     )
     response_payload = response.json()
 

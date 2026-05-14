@@ -173,11 +173,13 @@ text. Unsupported or under-specified questions return `ok=true` with
 
 `POST /recommendations` and its `POST /recommend/what-if` alias evaluate
 deterministic what-if scenarios through the same CP-SAT solver. The current
-supported goal is `reduce_shortages`. Scenario generation is intentionally
-narrow and capped: it tries availability changes for qualified unavailable
-employees on shortage slots, re-solves each scenario, and reports grounded
-shortage/objective comparisons. It does not use an LLM, does not generate
-schedules outside the solver, and does not change normal `/solve` behavior.
+supported goal is `reduce_shortages`, the response contract version is `1`, and
+the only supported scenario type is `set_availability`. Scenario generation is
+intentionally narrow and capped: it tries availability changes for qualified
+unavailable employees on shortage slots, re-solves each scenario, and reports
+grounded shortage/objective comparisons. It does not use an LLM, does not
+generate schedules outside the solver, and does not change normal `/solve`
+behavior.
 
 Run benchmark fixtures:
 

@@ -13,6 +13,9 @@ from .schemas import (
 
 RECOMMENDATION_GOAL_REDUCE_SHORTAGES = "reduce_shortages"
 SUPPORTED_RECOMMENDATION_GOALS = (RECOMMENDATION_GOAL_REDUCE_SHORTAGES,)
+RECOMMENDATION_CONTRACT_VERSION = 1
+SCENARIO_TYPE_SET_AVAILABILITY = "set_availability"
+SUPPORTED_SCENARIO_TYPES = (SCENARIO_TYPE_SET_AVAILABILITY,)
 MAX_RECOMMENDATION_SCENARIOS = 5
 
 
@@ -117,7 +120,7 @@ def generate_shortage_reduction_scenarios(
                     ),
                     "changes": [
                         {
-                            "type": "set_availability",
+                            "type": SCENARIO_TYPE_SET_AVAILABILITY,
                             "employee_id": employee_id,
                             "day": day,
                             "shift": shift,
@@ -238,6 +241,7 @@ def recommend_scenarios(
     )
     return {
         "type": "scenario_recommendations",
+        "recommendation_contract_version": RECOMMENDATION_CONTRACT_VERSION,
         "goal": goal,
         "status": baseline_snapshot["status"],
         "baseline": baseline_snapshot,
@@ -258,7 +262,9 @@ def recommend_scenarios(
         },
         "metadata": {
             "engine": "deterministic_scenario_recommendations",
+            "recommendation_contract_version": RECOMMENDATION_CONTRACT_VERSION,
             "supported_goals": list(SUPPORTED_RECOMMENDATION_GOALS),
+            "supported_scenario_types": list(SUPPORTED_SCENARIO_TYPES),
             "max_scenarios": max_scenarios,
             "uses_external_llm": False,
             "changes_solver_behavior": False,
@@ -310,7 +316,7 @@ def _apply_change(
     change: Mapping[str, Any],
 ) -> None:
     change_type = change.get("type")
-    if change_type != "set_availability":
+    if change_type != SCENARIO_TYPE_SET_AVAILABILITY:
         raise ScenarioValidationError(f"Unsupported scenario change {change_type}")
     employee_id = int(change["employee_id"])
     day = int(change["day"])

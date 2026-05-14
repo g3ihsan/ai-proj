@@ -359,9 +359,15 @@ Alias:
 - `POST /recommend/what-if`
 
 The recommendation endpoint evaluates small deterministic what-if scenarios
-against a baseline solve request. Version 1 supports only:
+against a baseline solve request. The response keeps
+`type=scenario_recommendations` for backward compatibility and includes
+`recommendation_contract_version=1`. Version 1 supports only:
 
 - `reduce_shortages`
+
+Supported scenario types:
+
+- `set_availability`
 
 The first scenario generator is intentionally narrow: for shortage slots, it
 tries making a qualified but unavailable employee available for that one
@@ -390,6 +396,7 @@ Success:
   "ok": true,
   "result": {
     "type": "scenario_recommendations",
+    "recommendation_contract_version": 1,
     "goal": "reduce_shortages",
     "baseline": {
       "status": "OPTIMAL",
@@ -405,6 +412,8 @@ Success:
     },
     "metadata": {
       "engine": "deterministic_scenario_recommendations",
+      "recommendation_contract_version": 1,
+      "supported_scenario_types": ["set_availability"],
       "uses_external_llm": false,
       "changes_solver_behavior": false
     }

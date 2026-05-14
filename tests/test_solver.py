@@ -55,6 +55,8 @@ from workforce_scheduling.explanations import (
 )
 from workforce_scheduling.recommendations import (
     RecommendationError,
+    ScenarioValidationError,
+    evaluate_scenario,
     generate_shortage_reduction_scenarios,
     recommendation_response_from_request,
     recommend_scenarios,
@@ -1770,6 +1772,7 @@ def test_recommendations_reduce_shortages_with_grounded_scenario_solve() -> None
     response = recommend_scenarios(request_payload)
 
     assert response["type"] == "scenario_recommendations"
+    assert response["recommendation_contract_version"] == 1
     assert response["goal"] == "reduce_shortages"
     assert response["baseline"]["total_shortage"] == 2
     assert response["summary"] == {
@@ -1789,6 +1792,8 @@ def test_recommendations_reduce_shortages_with_grounded_scenario_solve() -> None
     }
     assert response["evaluated_scenarios"][0]["snapshot"]["total_shortage"] == 1
     assert response["metadata"]["uses_external_llm"] is False
+    assert response["metadata"]["recommendation_contract_version"] == 1
+    assert response["metadata"]["supported_scenario_types"] == ["set_availability"]
     json.dumps(response, sort_keys=True)
 
 
@@ -1828,6 +1833,75 @@ def test_recommendations_reject_unsupported_goal() -> None:
         )
 
     assert "Unsupported recommendation goal balance_weekends" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("max_scenarios", [True, "2", 0, 6])
+def test_recommendations_reject_invalid_max_scenarios(max_scenarios: object) -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    with pytest.raises(RecommendationError):
+        recommendation_response_from_request(
+            {
+                "goal": "reduce_shortages",
+                "solve_request": request_payload,
+                "max_scenarios": max_scenarios,
+            }
+        )
+
+
+def test_recommendations_do_not_mutate_solve_request_payload() -> None:
+    request_payload = solve_request_to_payload(
+        _evidence_blocker_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+        response_mode=RESPONSE_MODE_COMPACT,
+    )
+    original_payload = json.loads(json.dumps(request_payload))
+
+    response = recommendation_response_from_request(
+        {
+            "goal": "reduce_shortages",
+            "solve_request": request_payload,
+        }
+    )
+
+    assert response["summary"]["recommendation_count"] == 1
+    assert request_payload == original_payload
+
+
+def test_recommendations_reject_unknown_scenario_change_type() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    with pytest.raises(ScenarioValidationError) as exc_info:
+        evaluate_scenario(
+            request_payload,
+            {
+                "scenario_id": "bad_scenario",
+                "goal": "reduce_shortages",
+                "title": "Bad scenario",
+                "description": "Unsupported change.",
+                "changes": [
+                    {
+                        "type": "add_employee",
+                        "employee_id": 0,
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "to": True,
+                    }
+                ],
+            },
+        )
+
+    assert str(exc_info.value) == "Unsupported scenario change add_employee"
 
 
 def test_explain_assignment_returns_non_assignment_explanation_when_not_assigned() -> None:
