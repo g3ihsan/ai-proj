@@ -1781,13 +1781,18 @@ def test_recommendations_reduce_shortages_with_grounded_scenario_solve() -> None
         "generated_scenario_count": 1,
         "scenario_count": 1,
         "discarded_scenario_count": 0,
+        "generated_recommendation_count": 1,
         "recommendation_count": 1,
+        "discarded_recommendation_count": 0,
         "best_shortage_reduction": 1,
     }
     assert response["discarded_scenarios"] == []
+    assert response["discarded_recommendations"] == []
     assert response["limits"] == {
         "max_scenarios": 5,
+        "max_recommendations": 5,
         "scenario_limit_reached": False,
+        "recommendation_limit_reached": False,
     }
     assert response["recommendations"][0]["comparison"] == {
         "total_shortage_delta": -1,
@@ -1803,6 +1808,7 @@ def test_recommendations_reduce_shortages_with_grounded_scenario_solve() -> None
     assert response["metadata"]["recommendation_type"] == "what_if"
     assert response["metadata"]["recommendation_contract_version"] == 1
     assert response["metadata"]["supported_scenario_types"] == ["set_availability"]
+    assert response["metadata"]["max_recommendations"] == 5
     json.dumps(response, sort_keys=True)
 
 
@@ -1825,6 +1831,7 @@ def test_recommendations_return_empty_when_no_shortage_exists() -> None:
     assert response["evaluated_scenarios"] == []
     assert response["discarded_scenarios"] == []
     assert response["summary"]["generated_scenario_count"] == 0
+    assert response["summary"]["generated_recommendation_count"] == 0
     assert response["summary"]["recommendation_count"] == 0
 
 
@@ -1853,7 +1860,9 @@ def test_recommendations_reports_discarded_scenarios_at_limit() -> None:
     assert response["summary"]["discarded_scenario_count"] == 1
     assert response["limits"] == {
         "max_scenarios": 1,
+        "max_recommendations": 5,
         "scenario_limit_reached": True,
+        "recommendation_limit_reached": False,
     }
     assert response["evaluated_scenarios"][0]["scenario_id"] == (
         "make_employee_1_available_day_0_shift_0_role_worker"
@@ -1880,6 +1889,57 @@ def test_recommendations_reports_discarded_scenarios_at_limit() -> None:
     ]
 
 
+def test_recommendations_reports_discarded_recommendations_at_limit() -> None:
+    roles = ["worker"]
+    demand = _build_demand(1, 1, roles, default=4)
+    data = _make_problem(
+        employees=[
+            _make_employee(0, roles, [[True]]),
+            _make_employee(1, roles, [[False]]),
+            _make_employee(2, roles, [[False]]),
+            _make_employee(3, roles, [[False]]),
+        ],
+        roles=roles,
+        shift_start_hours=[8],
+        shift_end_hours=[16],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+    request_payload = solve_request_to_payload(data, time_limit_sec=5.0, seed=1)
+
+    response = recommend_scenarios(
+        request_payload,
+        max_scenarios=3,
+        max_recommendations=1,
+    )
+
+    assert response["summary"]["generated_scenario_count"] == 3
+    assert response["summary"]["generated_recommendation_count"] == 3
+    assert response["summary"]["recommendation_count"] == 1
+    assert response["summary"]["discarded_recommendation_count"] == 2
+    assert response["limits"] == {
+        "max_scenarios": 3,
+        "max_recommendations": 1,
+        "scenario_limit_reached": False,
+        "recommendation_limit_reached": True,
+    }
+    assert [item["scenario_id"] for item in response["recommendations"]] == [
+        "make_employee_1_available_day_0_shift_0_role_worker"
+    ]
+    assert [
+        item["scenario_id"]
+        for item in response["discarded_recommendations"]
+    ] == [
+        "make_employee_2_available_day_0_shift_0_role_worker",
+        "make_employee_3_available_day_0_shift_0_role_worker",
+    ]
+    assert {
+        item["reason"]
+        for item in response["discarded_recommendations"]
+    } == {"MAX_RECOMMENDATION_LIMIT"}
+
+
 def test_recommendations_reject_unsupported_goal() -> None:
     request_payload = solve_request_to_payload(
         _small_fully_feasible_problem(),
@@ -1898,8 +1958,25 @@ def test_recommendations_reject_unsupported_goal() -> None:
     assert "Unsupported recommendation goal balance_weekends" in str(exc_info.value)
 
 
-@pytest.mark.parametrize("max_scenarios", [True, "2", 0, 6])
-def test_recommendations_reject_invalid_max_scenarios(max_scenarios: object) -> None:
+@pytest.mark.parametrize(
+    "payload_extra",
+    [
+        {"max_scenarios": True},
+        {"max_scenarios": "2"},
+        {"max_scenarios": 0},
+        {"max_scenarios": 6},
+        {"limits": "not-an-object"},
+        {"limits": {"max_scenarios": True}},
+        {"limits": {"max_scenarios": 0}},
+        {"limits": {"max_scenarios": 6}},
+        {"limits": {"max_recommendations": True}},
+        {"limits": {"max_recommendations": 0}},
+        {"limits": {"max_recommendations": 6}},
+    ],
+)
+def test_recommendations_reject_invalid_limits(
+    payload_extra: Dict[str, object],
+) -> None:
     request_payload = solve_request_to_payload(
         _small_fully_feasible_problem(),
         time_limit_sec=5.0,
@@ -1911,9 +1988,33 @@ def test_recommendations_reject_invalid_max_scenarios(max_scenarios: object) -> 
             {
                 "goal": "reduce_shortages",
                 "solve_request": request_payload,
-                "max_scenarios": max_scenarios,
+                **payload_extra,
             }
         )
+
+
+def test_recommendations_limits_object_overrides_top_level_max_scenarios() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    response = recommendation_response_from_request(
+        {
+            "goal": "reduce_shortages",
+            "solve_request": request_payload,
+            "max_scenarios": 5,
+            "limits": {"max_scenarios": 2, "max_recommendations": 1},
+        }
+    )
+
+    assert response["limits"] == {
+        "max_scenarios": 2,
+        "max_recommendations": 1,
+        "scenario_limit_reached": False,
+        "recommendation_limit_reached": False,
+    }
 
 
 def test_recommendations_do_not_mutate_solve_request_payload() -> None:

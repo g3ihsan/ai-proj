@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .schemas import (
@@ -18,7 +19,15 @@ RECOMMENDATION_TYPE_WHAT_IF = "what_if"
 SCENARIO_TYPE_SET_AVAILABILITY = "set_availability"
 SUPPORTED_SCENARIO_TYPES = (SCENARIO_TYPE_SET_AVAILABILITY,)
 DISCARDED_MAX_SCENARIO_LIMIT = "MAX_SCENARIO_LIMIT"
+DISCARDED_MAX_RECOMMENDATION_LIMIT = "MAX_RECOMMENDATION_LIMIT"
 MAX_RECOMMENDATION_SCENARIOS = 5
+MAX_RECOMMENDATIONS = 5
+
+
+@dataclass(frozen=True)
+class RecommendationLimits:
+    max_scenarios: int = MAX_RECOMMENDATION_SCENARIOS
+    max_recommendations: int = MAX_RECOMMENDATIONS
 
 
 class RecommendationError(ValueError):
@@ -201,12 +210,14 @@ def recommend_scenarios(
     *,
     goal: str = RECOMMENDATION_GOAL_REDUCE_SHORTAGES,
     max_scenarios: int = MAX_RECOMMENDATION_SCENARIOS,
+    max_recommendations: int = MAX_RECOMMENDATIONS,
 ) -> dict[str, Any]:
     if goal not in SUPPORTED_RECOMMENDATION_GOALS:
         raise RecommendationError(
             f"Unsupported recommendation goal {goal}; expected reduce_shortages"
         )
     _validate_max_scenarios(max_scenarios)
+    _validate_max_recommendations(max_recommendations)
     parse_solve_request(solve_request_payload)
     baseline_request = copy.deepcopy(dict(solve_request_payload))
     _force_debug_response_mode(baseline_request)
@@ -226,7 +237,7 @@ def recommend_scenarios(
         for candidate in scenario_candidates[max_scenarios:]
     ]
     evaluated_scenarios: list[dict[str, Any]] = []
-    recommendations: list[dict[str, Any]] = []
+    recommendation_candidates: list[dict[str, Any]] = []
 
     for scenario in scenarios:
         evaluation = evaluate_scenario(baseline_request, scenario)
@@ -234,7 +245,7 @@ def recommend_scenarios(
         evaluation["comparison"] = comparison
         evaluated_scenarios.append(evaluation)
         if comparison["shortage_reduction"] > 0:
-            recommendations.append(
+            recommendation_candidates.append(
                 {
                     "scenario_id": evaluation["scenario_id"],
                     "title": evaluation["title"],
@@ -247,12 +258,17 @@ def recommend_scenarios(
                 }
             )
 
-    recommendations.sort(
+    recommendation_candidates.sort(
         key=lambda item: (
             -item["comparison"]["shortage_reduction"],
             item["scenario_id"],
         )
     )
+    recommendations = recommendation_candidates[:max_recommendations]
+    discarded_recommendations = [
+        _discarded_recommendation(candidate, DISCARDED_MAX_RECOMMENDATION_LIMIT)
+        for candidate in recommendation_candidates[max_recommendations:]
+    ]
     return {
         "type": "scenario_recommendations",
         "recommendation_type": RECOMMENDATION_TYPE_WHAT_IF,
@@ -266,12 +282,15 @@ def recommend_scenarios(
             key=lambda item: item["scenario_id"],
         ),
         "discarded_scenarios": discarded_scenarios,
+        "discarded_recommendations": discarded_recommendations,
         "summary": {
             "baseline_total_shortage": baseline_snapshot["total_shortage"],
             "generated_scenario_count": len(scenario_candidates),
             "scenario_count": len(evaluated_scenarios),
             "discarded_scenario_count": len(discarded_scenarios),
+            "generated_recommendation_count": len(recommendation_candidates),
             "recommendation_count": len(recommendations),
+            "discarded_recommendation_count": len(discarded_recommendations),
             "best_shortage_reduction": (
                 recommendations[0]["comparison"]["shortage_reduction"]
                 if recommendations
@@ -280,7 +299,9 @@ def recommend_scenarios(
         },
         "limits": {
             "max_scenarios": max_scenarios,
+            "max_recommendations": max_recommendations,
             "scenario_limit_reached": bool(discarded_scenarios),
+            "recommendation_limit_reached": bool(discarded_recommendations),
         },
         "metadata": {
             "engine": "deterministic_scenario_recommendations",
@@ -289,6 +310,7 @@ def recommend_scenarios(
             "supported_goals": list(SUPPORTED_RECOMMENDATION_GOALS),
             "supported_scenario_types": list(SUPPORTED_SCENARIO_TYPES),
             "max_scenarios": max_scenarios,
+            "max_recommendations": max_recommendations,
             "uses_external_llm": False,
             "changes_solver_behavior": False,
         },
@@ -309,6 +331,20 @@ def _discarded_scenario(
     }
 
 
+def _discarded_recommendation(
+    recommendation: Mapping[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "scenario_id": recommendation["scenario_id"],
+        "status": "discarded",
+        "reason": reason,
+        "title": recommendation["title"],
+        "changes": [dict(change) for change in recommendation["changes"]],
+        "comparison": dict(recommendation["comparison"]),
+    }
+
+
 def recommendation_response_from_request(payload: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, Mapping):
         raise RecommendationError("recommendation request must be an object")
@@ -318,19 +354,43 @@ def recommendation_response_from_request(payload: Mapping[str, Any]) -> dict[str
     goal = payload.get("goal", RECOMMENDATION_GOAL_REDUCE_SHORTAGES)
     if not isinstance(goal, str) or not goal.strip():
         raise RecommendationError("recommendation goal must be a non-empty string")
-    max_scenarios = _max_scenarios_from_payload(payload)
+    limits = _limits_from_payload(payload)
     return recommend_scenarios(
         solve_request,
         goal=goal,
-        max_scenarios=max_scenarios,
+        max_scenarios=limits.max_scenarios,
+        max_recommendations=limits.max_recommendations,
     )
 
 
-def _max_scenarios_from_payload(payload: Mapping[str, Any]) -> int:
-    value = payload.get("max_scenarios", MAX_RECOMMENDATION_SCENARIOS)
+def _limits_from_payload(payload: Mapping[str, Any]) -> RecommendationLimits:
+    limits_payload = payload.get("limits", {})
+    if limits_payload is None:
+        limits_payload = {}
+    if not isinstance(limits_payload, Mapping):
+        raise RecommendationError("limits must be an object")
+    max_scenarios = _limit_int(
+        limits_payload.get(
+            "max_scenarios",
+            payload.get("max_scenarios", MAX_RECOMMENDATION_SCENARIOS),
+        ),
+        "max_scenarios",
+    )
+    max_recommendations = _limit_int(
+        limits_payload.get("max_recommendations", MAX_RECOMMENDATIONS),
+        "max_recommendations",
+    )
+    _validate_max_scenarios(max_scenarios)
+    _validate_max_recommendations(max_recommendations)
+    return RecommendationLimits(
+        max_scenarios=max_scenarios,
+        max_recommendations=max_recommendations,
+    )
+
+
+def _limit_int(value: Any, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
-        raise RecommendationError("max_scenarios must be an integer")
-    _validate_max_scenarios(value)
+        raise RecommendationError(f"{field} must be an integer")
     return value
 
 
@@ -338,6 +398,13 @@ def _validate_max_scenarios(value: int) -> None:
     if not 1 <= value <= MAX_RECOMMENDATION_SCENARIOS:
         raise RecommendationError(
             f"max_scenarios must be between 1 and {MAX_RECOMMENDATION_SCENARIOS}"
+        )
+
+
+def _validate_max_recommendations(value: int) -> None:
+    if not 1 <= value <= MAX_RECOMMENDATIONS:
+        raise RecommendationError(
+            f"max_recommendations must be between 1 and {MAX_RECOMMENDATIONS}"
         )
 
 

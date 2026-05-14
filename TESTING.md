@@ -179,8 +179,10 @@ scenario type is `set_availability`. Scenario generation is intentionally
 narrow and capped: it tries availability changes for qualified unavailable
 employees on shortage slots, re-solves each scenario, reports grounded
 shortage/objective comparisons, and reports unsolved over-limit candidates in
-`discarded_scenarios`. It does not use an LLM, does not generate schedules
-outside the solver, and does not change normal `/solve` behavior.
+`discarded_scenarios`. Returned recommendations are also capped through
+`limits.max_recommendations`; positive over-limit results are reported in
+`discarded_recommendations`. It does not use an LLM, does not generate
+schedules outside the solver, and does not change normal `/solve` behavior.
 
 Run benchmark fixtures:
 

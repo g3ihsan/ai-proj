@@ -47,6 +47,7 @@ from .jobs import (
     submit_solve_job,
 )
 from .recommendations import (
+    MAX_RECOMMENDATIONS,
     MAX_RECOMMENDATION_SCENARIOS,
     RECOMMENDATION_CONTRACT_VERSION,
     RECOMMENDATION_TYPE_WHAT_IF,
@@ -247,6 +248,7 @@ async def metadata() -> dict[str, Any]:
             "supported_goals": list(SUPPORTED_RECOMMENDATION_GOALS),
             "supported_scenario_types": list(SUPPORTED_SCENARIO_TYPES),
             "max_scenarios": MAX_RECOMMENDATION_SCENARIOS,
+            "max_recommendations": MAX_RECOMMENDATIONS,
             "response_shape": {
                 "ok": True,
                 "result": "Scenario recommendation payload",

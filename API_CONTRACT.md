@@ -386,9 +386,15 @@ Request:
     "problem": {},
     "options": {}
   },
-  "max_scenarios": 5
+  "limits": {
+    "max_scenarios": 5,
+    "max_recommendations": 5
+  }
 }
 ```
+
+The legacy top-level `max_scenarios` field remains accepted for backward
+compatibility. When `limits.max_scenarios` is present, it is authoritative.
 
 Success:
 
@@ -407,17 +413,22 @@ Success:
     "recommendations": [],
     "evaluated_scenarios": [],
     "discarded_scenarios": [],
+    "discarded_recommendations": [],
     "summary": {
       "baseline_total_shortage": 1,
       "generated_scenario_count": 0,
       "scenario_count": 0,
       "discarded_scenario_count": 0,
+      "generated_recommendation_count": 0,
       "recommendation_count": 0,
+      "discarded_recommendation_count": 0,
       "best_shortage_reduction": 0
     },
     "limits": {
       "max_scenarios": 5,
-      "scenario_limit_reached": false
+      "max_recommendations": 5,
+      "scenario_limit_reached": false,
+      "recommendation_limit_reached": false
     },
     "metadata": {
       "engine": "deterministic_scenario_recommendations",
@@ -435,6 +446,10 @@ Success:
 Candidate scenarios beyond the requested `max_scenarios` are not solved; they
 are returned in `discarded_scenarios` with `status=discarded` and
 `reason=MAX_SCENARIO_LIMIT`.
+`max_recommendations` is optional and capped at 5. Positive scenario results
+beyond that returned recommendation cap are reported in
+`discarded_recommendations` with `status=discarded` and
+`reason=MAX_RECOMMENDATION_LIMIT`.
 Unsupported goals or invalid recommendation request shapes return
 `RecommendationError` with HTTP 400. Invalid solve request/schema errors retain
 their original schema error type with HTTP 400. Internal scenario solve failures

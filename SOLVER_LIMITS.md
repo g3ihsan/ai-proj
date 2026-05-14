@@ -124,9 +124,10 @@ contract version is `1`, and the only current scenario type is
 `set_availability`. Responses include `recommendation_type=what_if`. It is
 capped at 5 solved scenarios per request in the in-process prototype;
 additional candidates are reported as discarded instead of being solved.
-Recommendations are decision-support evidence, not automatic roster edits, and
-they do not add objectives, constraints, forecasting, or LLM-generated schedule
-changes.
+Returned recommendations are capped at 5 as well; positive over-limit results
+are reported in `discarded_recommendations`. Recommendations are
+decision-support evidence, not automatic roster edits, and they do not add
+objectives, constraints, forecasting, or LLM-generated schedule changes.
 The current evidence contract version is `1`. Public evidence uses stable
 uppercase reason codes. Internal lowercase blocker names are deliberately mapped
 to those public codes; unknown internal blocker names should fail tests instead

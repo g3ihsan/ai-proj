@@ -317,6 +317,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "supported_goals": ["reduce_shortages"],
             "supported_scenario_types": ["set_availability"],
             "max_scenarios": 5,
+            "max_recommendations": 5,
             "response_shape": {
                 "ok": True,
                 "result": "Scenario recommendation payload",
@@ -1243,10 +1244,14 @@ def test_api_recommendations_returns_grounded_shortage_reduction() -> None:
     assert result_payload["summary"]["generated_scenario_count"] == 1
     assert result_payload["summary"]["recommendation_count"] == 1
     assert result_payload["summary"]["discarded_scenario_count"] == 0
+    assert result_payload["summary"]["discarded_recommendation_count"] == 0
     assert result_payload["discarded_scenarios"] == []
+    assert result_payload["discarded_recommendations"] == []
     assert result_payload["limits"] == {
         "max_scenarios": 5,
+        "max_recommendations": 5,
         "scenario_limit_reached": False,
+        "recommendation_limit_reached": False,
     }
     assert result_payload["recommendations"][0]["comparison"]["shortage_reduction"] == 1
     assert result_payload["recommendations"][0]["changes"] == [
@@ -1311,17 +1316,37 @@ def test_api_recommendations_rejects_invalid_request() -> None:
         {
             "goal": "reduce_shortages",
             "solve_request": _small_solve_request(),
-            "max_scenarios": True,
+            "limits": "not-an-object",
         },
         {
             "goal": "reduce_shortages",
             "solve_request": _small_solve_request(),
-            "max_scenarios": 0,
+            "limits": {"max_scenarios": True},
         },
         {
             "goal": "reduce_shortages",
             "solve_request": _small_solve_request(),
-            "max_scenarios": 6,
+            "limits": {"max_scenarios": 0},
+        },
+        {
+            "goal": "reduce_shortages",
+            "solve_request": _small_solve_request(),
+            "limits": {"max_scenarios": 6},
+        },
+        {
+            "goal": "reduce_shortages",
+            "solve_request": _small_solve_request(),
+            "limits": {"max_recommendations": True},
+        },
+        {
+            "goal": "reduce_shortages",
+            "solve_request": _small_solve_request(),
+            "limits": {"max_recommendations": 0},
+        },
+        {
+            "goal": "reduce_shortages",
+            "solve_request": _small_solve_request(),
+            "limits": {"max_recommendations": 6},
         },
     ],
 )
@@ -1338,6 +1363,30 @@ def test_api_recommendations_rejects_invalid_contract_inputs(
     assert response.status_code == 400
     assert response_payload["ok"] is False
     assert response_payload["error"]["type"] == "RecommendationError"
+
+
+def test_api_recommendations_accepts_limits_object() -> None:
+    response = _api_request(
+        "POST",
+        "/recommend/what-if",
+        json_payload={
+            "goal": "reduce_shortages",
+            "solve_request": _shortage_reduction_solve_request(),
+            "limits": {
+                "max_scenarios": 1,
+                "max_recommendations": 1,
+            },
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["limits"] == {
+        "max_scenarios": 1,
+        "max_recommendations": 1,
+        "scenario_limit_reached": False,
+        "recommendation_limit_reached": False,
+    }
 
 
 def test_api_recommendations_preserves_schema_error_status() -> None:
