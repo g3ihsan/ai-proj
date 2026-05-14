@@ -1772,14 +1772,22 @@ def test_recommendations_reduce_shortages_with_grounded_scenario_solve() -> None
     response = recommend_scenarios(request_payload)
 
     assert response["type"] == "scenario_recommendations"
+    assert response["recommendation_type"] == "what_if"
     assert response["recommendation_contract_version"] == 1
     assert response["goal"] == "reduce_shortages"
     assert response["baseline"]["total_shortage"] == 2
     assert response["summary"] == {
         "baseline_total_shortage": 2,
+        "generated_scenario_count": 1,
         "scenario_count": 1,
+        "discarded_scenario_count": 0,
         "recommendation_count": 1,
         "best_shortage_reduction": 1,
+    }
+    assert response["discarded_scenarios"] == []
+    assert response["limits"] == {
+        "max_scenarios": 5,
+        "scenario_limit_reached": False,
     }
     assert response["recommendations"][0]["comparison"] == {
         "total_shortage_delta": -1,
@@ -1792,6 +1800,7 @@ def test_recommendations_reduce_shortages_with_grounded_scenario_solve() -> None
     }
     assert response["evaluated_scenarios"][0]["snapshot"]["total_shortage"] == 1
     assert response["metadata"]["uses_external_llm"] is False
+    assert response["metadata"]["recommendation_type"] == "what_if"
     assert response["metadata"]["recommendation_contract_version"] == 1
     assert response["metadata"]["supported_scenario_types"] == ["set_availability"]
     json.dumps(response, sort_keys=True)
@@ -1814,7 +1823,61 @@ def test_recommendations_return_empty_when_no_shortage_exists() -> None:
     assert response["baseline"]["total_shortage"] == 0
     assert response["recommendations"] == []
     assert response["evaluated_scenarios"] == []
+    assert response["discarded_scenarios"] == []
+    assert response["summary"]["generated_scenario_count"] == 0
     assert response["summary"]["recommendation_count"] == 0
+
+
+def test_recommendations_reports_discarded_scenarios_at_limit() -> None:
+    roles = ["worker"]
+    demand = _build_demand(1, 1, roles, default=3)
+    data = _make_problem(
+        employees=[
+            _make_employee(0, roles, [[True]]),
+            _make_employee(1, roles, [[False]]),
+            _make_employee(2, roles, [[False]]),
+        ],
+        roles=roles,
+        shift_start_hours=[8],
+        shift_end_hours=[16],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+    request_payload = solve_request_to_payload(data, time_limit_sec=5.0, seed=1)
+
+    response = recommend_scenarios(request_payload, max_scenarios=1)
+
+    assert response["summary"]["generated_scenario_count"] == 2
+    assert response["summary"]["scenario_count"] == 1
+    assert response["summary"]["discarded_scenario_count"] == 1
+    assert response["limits"] == {
+        "max_scenarios": 1,
+        "scenario_limit_reached": True,
+    }
+    assert response["evaluated_scenarios"][0]["scenario_id"] == (
+        "make_employee_1_available_day_0_shift_0_role_worker"
+    )
+    assert response["discarded_scenarios"] == [
+        {
+            "scenario_id": "make_employee_2_available_day_0_shift_0_role_worker",
+            "goal": "reduce_shortages",
+            "status": "discarded",
+            "reason": "MAX_SCENARIO_LIMIT",
+            "title": "Ask employee 2 to work day 0 shift 0 as worker",
+            "changes": [
+                {
+                    "type": "set_availability",
+                    "employee_id": 2,
+                    "day": 0,
+                    "shift": 0,
+                    "role": "worker",
+                    "from": False,
+                    "to": True,
+                }
+            ],
+        }
+    ]
 
 
 def test_recommendations_reject_unsupported_goal() -> None:

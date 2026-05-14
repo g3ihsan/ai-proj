@@ -49,6 +49,7 @@ from .jobs import (
 from .recommendations import (
     MAX_RECOMMENDATION_SCENARIOS,
     RECOMMENDATION_CONTRACT_VERSION,
+    RECOMMENDATION_TYPE_WHAT_IF,
     SUPPORTED_RECOMMENDATION_GOALS,
     SUPPORTED_SCENARIO_TYPES,
     recommendation_response_from_request,
@@ -240,6 +241,7 @@ async def metadata() -> dict[str, Any]:
         },
         "recommendation_engine": {
             "source": "Deterministic scenario solves",
+            "recommendation_type": RECOMMENDATION_TYPE_WHAT_IF,
             "recommendation_contract_version": RECOMMENDATION_CONTRACT_VERSION,
             "uses_external_llm": False,
             "supported_goals": list(SUPPORTED_RECOMMENDATION_GOALS),
@@ -405,6 +407,8 @@ async def _recommendations_endpoint(
     status_code = 200 if response_payload["ok"] else 400
     if _error_type(response_payload) == "RequestTooLargeError":
         status_code = 413
+    if _error_type(response_payload) == "ScenarioEvaluationError":
+        status_code = 500
     _log_solve_route(request, route_name, response_payload, status_code)
     return JSONResponse(content=response_payload, status_code=status_code)
 

@@ -14,8 +14,10 @@ from .schemas import (
 RECOMMENDATION_GOAL_REDUCE_SHORTAGES = "reduce_shortages"
 SUPPORTED_RECOMMENDATION_GOALS = (RECOMMENDATION_GOAL_REDUCE_SHORTAGES,)
 RECOMMENDATION_CONTRACT_VERSION = 1
+RECOMMENDATION_TYPE_WHAT_IF = "what_if"
 SCENARIO_TYPE_SET_AVAILABILITY = "set_availability"
 SUPPORTED_SCENARIO_TYPES = (SCENARIO_TYPE_SET_AVAILABILITY,)
+DISCARDED_MAX_SCENARIO_LIMIT = "MAX_SCENARIO_LIMIT"
 MAX_RECOMMENDATION_SCENARIOS = 5
 
 
@@ -66,6 +68,16 @@ def generate_shortage_reduction_scenarios(
     max_scenarios: int = MAX_RECOMMENDATION_SCENARIOS,
 ) -> list[dict[str, Any]]:
     _validate_max_scenarios(max_scenarios)
+    return _shortage_reduction_scenario_candidates(
+        solve_request_payload,
+        baseline_result_payload,
+    )[:max_scenarios]
+
+
+def _shortage_reduction_scenario_candidates(
+    solve_request_payload: Mapping[str, Any],
+    baseline_result_payload: Mapping[str, Any],
+) -> list[dict[str, Any]]:
     problem = _mapping_field(solve_request_payload, "problem")
     employees = _list_field(problem, "employees")
     employee_index = {
@@ -131,8 +143,6 @@ def generate_shortage_reduction_scenarios(
                     ],
                 }
             )
-            if len(scenarios) >= max_scenarios:
-                return scenarios
     return scenarios
 
 
@@ -206,11 +216,15 @@ def recommend_scenarios(
 
     baseline_result = baseline_response["result"]
     baseline_snapshot = build_baseline_snapshot(baseline_result)
-    scenarios = generate_shortage_reduction_scenarios(
+    scenario_candidates = _shortage_reduction_scenario_candidates(
         baseline_request,
         baseline_result,
-        max_scenarios=max_scenarios,
     )
+    scenarios = scenario_candidates[:max_scenarios]
+    discarded_scenarios = [
+        _discarded_scenario(candidate, DISCARDED_MAX_SCENARIO_LIMIT)
+        for candidate in scenario_candidates[max_scenarios:]
+    ]
     evaluated_scenarios: list[dict[str, Any]] = []
     recommendations: list[dict[str, Any]] = []
 
@@ -241,6 +255,7 @@ def recommend_scenarios(
     )
     return {
         "type": "scenario_recommendations",
+        "recommendation_type": RECOMMENDATION_TYPE_WHAT_IF,
         "recommendation_contract_version": RECOMMENDATION_CONTRACT_VERSION,
         "goal": goal,
         "status": baseline_snapshot["status"],
@@ -250,9 +265,12 @@ def recommend_scenarios(
             evaluated_scenarios,
             key=lambda item: item["scenario_id"],
         ),
+        "discarded_scenarios": discarded_scenarios,
         "summary": {
             "baseline_total_shortage": baseline_snapshot["total_shortage"],
+            "generated_scenario_count": len(scenario_candidates),
             "scenario_count": len(evaluated_scenarios),
+            "discarded_scenario_count": len(discarded_scenarios),
             "recommendation_count": len(recommendations),
             "best_shortage_reduction": (
                 recommendations[0]["comparison"]["shortage_reduction"]
@@ -260,8 +278,13 @@ def recommend_scenarios(
                 else 0
             ),
         },
+        "limits": {
+            "max_scenarios": max_scenarios,
+            "scenario_limit_reached": bool(discarded_scenarios),
+        },
         "metadata": {
             "engine": "deterministic_scenario_recommendations",
+            "recommendation_type": RECOMMENDATION_TYPE_WHAT_IF,
             "recommendation_contract_version": RECOMMENDATION_CONTRACT_VERSION,
             "supported_goals": list(SUPPORTED_RECOMMENDATION_GOALS),
             "supported_scenario_types": list(SUPPORTED_SCENARIO_TYPES),
@@ -269,6 +292,20 @@ def recommend_scenarios(
             "uses_external_llm": False,
             "changes_solver_behavior": False,
         },
+    }
+
+
+def _discarded_scenario(
+    scenario: Mapping[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "scenario_id": scenario["scenario_id"],
+        "goal": scenario["goal"],
+        "status": "discarded",
+        "reason": reason,
+        "title": scenario["title"],
+        "changes": [dict(change) for change in scenario["changes"]],
     }
 
 

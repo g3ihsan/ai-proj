@@ -13,6 +13,7 @@ from typing import Dict
 import httpx
 import pytest
 
+import workforce_scheduling.api as api_module
 from workforce_scheduling.api import (
     MAX_CSV_UPLOAD_BYTES,
     MAX_JSON_REQUEST_BYTES,
@@ -28,6 +29,7 @@ from workforce_scheduling.jobs import (
     SOLVE_JOB_MAX_WORKERS,
     solve_job_executor,
 )
+from workforce_scheduling.recommendations import ScenarioEvaluationError
 
 
 def _api_request(
@@ -309,6 +311,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
         },
         "recommendation_engine": {
             "source": "Deterministic scenario solves",
+            "recommendation_type": "what_if",
             "recommendation_contract_version": 1,
             "uses_external_llm": False,
             "supported_goals": ["reduce_shortages"],
@@ -1233,10 +1236,18 @@ def test_api_recommendations_returns_grounded_shortage_reduction() -> None:
     assert response.status_code == 200
     assert response_payload["ok"] is True
     assert result_payload["type"] == "scenario_recommendations"
+    assert result_payload["recommendation_type"] == "what_if"
     assert result_payload["recommendation_contract_version"] == 1
     assert result_payload["goal"] == "reduce_shortages"
     assert result_payload["baseline"]["total_shortage"] == 1
+    assert result_payload["summary"]["generated_scenario_count"] == 1
     assert result_payload["summary"]["recommendation_count"] == 1
+    assert result_payload["summary"]["discarded_scenario_count"] == 0
+    assert result_payload["discarded_scenarios"] == []
+    assert result_payload["limits"] == {
+        "max_scenarios": 5,
+        "scenario_limit_reached": False,
+    }
     assert result_payload["recommendations"][0]["comparison"]["shortage_reduction"] == 1
     assert result_payload["recommendations"][0]["changes"] == [
         {
@@ -1250,6 +1261,7 @@ def test_api_recommendations_returns_grounded_shortage_reduction() -> None:
         }
     ]
     assert result_payload["metadata"]["uses_external_llm"] is False
+    assert result_payload["metadata"]["recommendation_type"] == "what_if"
     assert result_payload["metadata"]["supported_scenario_types"] == [
         "set_availability"
     ]
@@ -1326,6 +1338,49 @@ def test_api_recommendations_rejects_invalid_contract_inputs(
     assert response.status_code == 400
     assert response_payload["ok"] is False
     assert response_payload["error"]["type"] == "RecommendationError"
+
+
+def test_api_recommendations_preserves_schema_error_status() -> None:
+    response = _api_request(
+        "POST",
+        "/recommend/what-if",
+        json_payload={
+            "goal": "reduce_shortages",
+            "solve_request": {"options": {"seed": 1}},
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "SchemaValidationError"
+
+
+def test_api_recommendations_maps_scenario_evaluation_error_to_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_scenario_failure(_payload):
+        raise ScenarioEvaluationError("scenario solve failed")
+
+    monkeypatch.setattr(
+        api_module,
+        "recommendation_response_from_request",
+        _raise_scenario_failure,
+    )
+
+    response = _api_request(
+        "POST",
+        "/recommendations",
+        json_payload={
+            "goal": "reduce_shortages",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 500
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ScenarioEvaluationError"
 
 
 def test_api_recommendations_are_deterministic_and_do_not_mutate_solve_output() -> None:

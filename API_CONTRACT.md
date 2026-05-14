@@ -361,7 +361,8 @@ Alias:
 The recommendation endpoint evaluates small deterministic what-if scenarios
 against a baseline solve request. The response keeps
 `type=scenario_recommendations` for backward compatibility and includes
-`recommendation_contract_version=1`. Version 1 supports only:
+`recommendation_type=what_if` plus `recommendation_contract_version=1`.
+Version 1 supports only:
 
 - `reduce_shortages`
 
@@ -396,6 +397,7 @@ Success:
   "ok": true,
   "result": {
     "type": "scenario_recommendations",
+    "recommendation_type": "what_if",
     "recommendation_contract_version": 1,
     "goal": "reduce_shortages",
     "baseline": {
@@ -404,14 +406,22 @@ Success:
     },
     "recommendations": [],
     "evaluated_scenarios": [],
+    "discarded_scenarios": [],
     "summary": {
       "baseline_total_shortage": 1,
+      "generated_scenario_count": 0,
       "scenario_count": 0,
+      "discarded_scenario_count": 0,
       "recommendation_count": 0,
       "best_shortage_reduction": 0
     },
+    "limits": {
+      "max_scenarios": 5,
+      "scenario_limit_reached": false
+    },
     "metadata": {
       "engine": "deterministic_scenario_recommendations",
+      "recommendation_type": "what_if",
       "recommendation_contract_version": 1,
       "supported_scenario_types": ["set_availability"],
       "uses_external_llm": false,
@@ -422,10 +432,15 @@ Success:
 ```
 
 `max_scenarios` is optional and capped at 5 for this in-process prototype.
+Candidate scenarios beyond the requested `max_scenarios` are not solved; they
+are returned in `discarded_scenarios` with `status=discarded` and
+`reason=MAX_SCENARIO_LIMIT`.
 Unsupported goals or invalid recommendation request shapes return
-`RecommendationError`. Scenario generation is decision support only: managers
-must still confirm whether the proposed availability change is operationally
-valid before using it as real input.
+`RecommendationError` with HTTP 400. Invalid solve request/schema errors retain
+their original schema error type with HTTP 400. Internal scenario solve failures
+return `ScenarioEvaluationError` with HTTP 500. Scenario generation is decision
+support only: managers must still confirm whether the proposed availability
+change is operationally valid before using it as real input.
 
 ### `POST /solve-csv`
 
