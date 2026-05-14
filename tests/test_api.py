@@ -313,6 +313,32 @@ def test_api_explain_assignment_uses_targeted_evidence() -> None:
     assert "ASSIGNED_AVAILABLE" in result_payload["reason_codes"]
 
 
+def test_api_explain_assignment_returns_non_assignment_explanation() -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
+    request_payload = json.loads(fixture_path.read_text())
+
+    response = _api_request(
+        "POST",
+        "/explain/assignment",
+        json_payload={
+            "solve_request": request_payload,
+            "target": {
+                "employee_id": 1,
+                "day": 0,
+                "shift": 0,
+                "role": "worker",
+            },
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["type"] == "non_assignment_explanation"
+    assert result_payload["assigned"] is False
+    assert result_payload["reason_codes"]
+    assert result_payload["details"]["assigned_employee_ids"] == [0]
+
+
 def test_api_explain_assignment_returns_404_for_missing_target() -> None:
     fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
     request_payload = json.loads(fixture_path.read_text())
@@ -336,6 +362,60 @@ def test_api_explain_assignment_returns_404_for_missing_target() -> None:
     assert response_payload["ok"] is False
     assert response_payload["error"]["type"] == "ExplanationTargetNotFoundError"
     assert response_payload["error"]["request_id"] == response.headers["x-request-id"]
+
+
+def test_api_explain_assignment_returns_query_error_for_bad_target() -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
+    request_payload = json.loads(fixture_path.read_text())
+
+    response = _api_request(
+        "POST",
+        "/explain/assignment",
+        json_payload={
+            "solve_request": request_payload,
+            "target": {
+                "employee_id": "not-an-int",
+                "day": 0,
+                "shift": 0,
+                "role": "worker",
+            },
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"] == {
+        "type": "ExplanationQueryError",
+        "message": "Explanation target field employee_id must be an integer",
+        "request_id": response.headers["x-request-id"],
+    }
+
+
+def test_api_explain_assignment_returns_query_error_for_missing_role() -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
+    request_payload = json.loads(fixture_path.read_text())
+
+    response = _api_request(
+        "POST",
+        "/explain/assignment",
+        json_payload={
+            "solve_request": request_payload,
+            "target": {
+                "employee_id": 0,
+                "day": 0,
+                "shift": 0,
+            },
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ExplanationQueryError"
+    assert response_payload["error"]["message"] == (
+        "Missing explanation target field(s): role"
+    )
 
 
 def test_solve_job_executor_is_bounded() -> None:

@@ -186,6 +186,16 @@ Target fields:
 - `/explain/employee`: `employee_id`
 - `/explain/shift`: `day`, `shift`, optional `role`
 
+`/explain/assignment` returns `type=assignment_explanation` and
+`assigned=true` when the employee was assigned to the requested slot. If the
+employee was considered but not assigned, it returns
+`type=non_assignment_explanation`, `assigned=false`, the stable reason codes,
+and any selected employee ids available from the solver evidence.
+
+Invalid explanation targets return a normal error envelope with
+`type=ExplanationQueryError`. Missing evidence for a valid target returns
+`type=ExplanationTargetNotFoundError`.
+
 ### `POST /solve-csv`
 
 Accepts three uploaded CSV files, solves through the same canonical JSON

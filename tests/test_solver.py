@@ -1364,6 +1364,34 @@ def test_explanation_helpers_return_json_safe_manager_payloads() -> None:
     assert shortages["details"]["total_shortage"] == 0
 
 
+def test_explain_assignment_returns_non_assignment_explanation_when_not_assigned() -> None:
+    result = solve(_evidence_blocker_problem(), time_limit_sec=5.0, seed=1)
+    debug_payload = solve_result_to_payload(result, response_mode=RESPONSE_MODE_DEBUG)
+
+    explanation = explain_assignment(
+        debug_payload,
+        employee_id=1,
+        day=0,
+        shift=0,
+        role="worker",
+    )
+
+    assert explanation["type"] == "non_assignment_explanation"
+    assert explanation["assigned"] is False
+    assert explanation["details"]["assigned"] is False
+    assert explanation["details"]["assignment"] == {
+        "employee_id": 1,
+        "day": 0,
+        "shift": 0,
+        "role": "worker",
+    }
+    assert explanation["details"]["assigned_employee_ids"] == [0]
+    assert explanation["details"]["blocker_details"]["reason_codes"] == [
+        "BLOCKED_UNAVAILABLE"
+    ]
+    assert explanation["reason_codes"] == ["BLOCKED_UNAVAILABLE"]
+
+
 def test_explanation_payload_forces_debug_evidence_without_changing_solution() -> None:
     request_payload = solve_request_to_payload(
         _small_fully_feasible_problem(),

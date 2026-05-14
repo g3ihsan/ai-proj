@@ -19,6 +19,7 @@ from .csv_adapter import (
     write_solve_response_csv,
 )
 from .explanations import (
+    ExplanationQueryError,
     explain_assignment,
     explain_employee,
     explain_shift,
@@ -523,20 +524,43 @@ def _target_from_payload(
     if not required_target_keys:
         return {}
     if not isinstance(payload, dict):
-        raise ValueError("Explanation target must be an object")
+        raise ExplanationQueryError("Explanation target must be an object")
     missing = [
         key
         for key in required_target_keys
         if key not in payload
     ]
     if missing:
-        raise ValueError(f"Missing explanation target field(s): {', '.join(missing)}")
-    target = {key: payload[key] for key in payload if key in {*required_target_keys, "role"}}
+        raise ExplanationQueryError(
+            f"Missing explanation target field(s): {', '.join(missing)}"
+        )
+    target = {
+        key: payload[key]
+        for key in payload
+        if key in {*required_target_keys, "role"}
+    }
     for key in ("employee_id", "day", "shift"):
         if key in target:
-            target[key] = int(target[key])
+            if isinstance(target[key], bool):
+                raise ExplanationQueryError(
+                    f"Explanation target field {key} must be an integer"
+                )
+            try:
+                target[key] = int(target[key])
+            except (TypeError, ValueError) as exc:
+                raise ExplanationQueryError(
+                    f"Explanation target field {key} must be an integer"
+                ) from exc
+    if "role" in required_target_keys and target.get("role") is None:
+        raise ExplanationQueryError(
+            "Explanation target field role must be a non-empty string"
+        )
     if "role" in target and target["role"] is not None:
-        target["role"] = str(target["role"])
+        if not isinstance(target["role"], str) or not target["role"].strip():
+            raise ExplanationQueryError(
+                "Explanation target field role must be a non-empty string"
+            )
+        target["role"] = target["role"].strip()
     return target
 
 

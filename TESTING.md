@@ -135,7 +135,9 @@ return manager-readable explanation payloads in the normal envelope:
 `{"ok": true, "result": ...}`. They do not call an LLM and do not change solver
 decisions. Detail endpoints accept `{"solve_request": ..., "target": ...}`.
 For example, `/explain/assignment` target fields are `employee_id`, `day`,
-`shift`, and `role`.
+`shift`, and `role`. Assignment explanations cover both assigned and
+non-assigned cases. Invalid target shapes return `ExplanationQueryError`; valid
+targets with no matching evidence return `ExplanationTargetNotFoundError`.
 
 Run benchmark fixtures:
 

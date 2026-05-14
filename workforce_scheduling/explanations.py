@@ -20,6 +20,10 @@ class ExplanationError(ValueError):
     pass
 
 
+class ExplanationQueryError(ExplanationError):
+    pass
+
+
 class ExplanationTargetNotFoundError(ExplanationError):
     pass
 
@@ -111,7 +115,16 @@ def explain_assignment(
         day=day,
         shift=shift,
         role=role,
+        raise_if_missing=False,
     )
+    if assignment is None:
+        return _explain_non_assignment(
+            result,
+            employee_id=employee_id,
+            day=day,
+            shift=shift,
+            role=role,
+        )
 
     return _explanation(
         explanation_type="assignment_explanation",
@@ -124,6 +137,7 @@ def explain_assignment(
         evidence_contract_version=_evidence_contract_version(result),
         reason_codes=list(assignment.get("reason_codes", [])),
         details={
+            "assigned": True,
             "assignment": {
                 "employee_id": employee_id,
                 "day": day,
@@ -141,6 +155,7 @@ def explain_assignment(
             },
         },
         recommended_next_checks=[],
+        extra_fields={"assigned": True},
     )
 
 
@@ -318,8 +333,9 @@ def _explanation(
     reason_codes: list[str],
     details: Dict[str, Any],
     recommended_next_checks: list[str],
+    extra_fields: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    return {
+    payload = {
         "type": explanation_type,
         "status": status,
         "title": title,
@@ -329,6 +345,9 @@ def _explanation(
         "details": details,
         "recommended_next_checks": list(recommended_next_checks),
     }
+    if extra_fields:
+        payload.update(extra_fields)
+    return payload
 
 
 def _evidence_contract_version(result: Mapping[str, Any]) -> int:
@@ -343,7 +362,8 @@ def _find_assignment_explanation(
     day: int,
     shift: int,
     role: str,
-) -> Mapping[str, Any]:
+    raise_if_missing: bool = True,
+) -> Mapping[str, Any] | None:
     for explanation in result.get("assignment_explanations", []):
         if (
             int(explanation["employee_id"]) == employee_id
@@ -352,8 +372,80 @@ def _find_assignment_explanation(
             and str(explanation["role"]) == role
         ):
             return explanation
+    if not raise_if_missing:
+        return None
     raise ExplanationTargetNotFoundError(
         "No assignment explanation found for "
+        f"employee {employee_id}, day {day}, shift {shift}, role {role}"
+    )
+
+
+def _explain_non_assignment(
+    result: Mapping[str, Any],
+    *,
+    employee_id: int,
+    day: int,
+    shift: int,
+    role: str,
+) -> Dict[str, Any]:
+    non_assignment = _find_non_assignment_explanation(
+        result,
+        employee_id=employee_id,
+        day=day,
+        shift=shift,
+        role=role,
+    )
+    assigned_employee_ids = list(non_assignment.get("assigned_employee_ids", []))
+    reason_codes = list(non_assignment.get("reason_codes", []))
+    return _explanation(
+        explanation_type="non_assignment_explanation",
+        status=str(result.get("metrics", {}).get("status", "")),
+        title="Non-assignment explanation",
+        message=(
+            f"Employee {employee_id} was not assigned to day {day} shift {shift} "
+            f"as {role}."
+        ),
+        evidence_contract_version=_evidence_contract_version(result),
+        reason_codes=reason_codes,
+        details={
+            "assigned": False,
+            "assignment": {
+                "employee_id": employee_id,
+                "day": day,
+                "shift": shift,
+                "role": role,
+            },
+            "assigned_employee_ids": assigned_employee_ids,
+            "blocker_details": {
+                "reason_codes": reason_codes,
+                "assigned_employee_ids": assigned_employee_ids,
+            },
+        },
+        recommended_next_checks=[
+            "Review reason_codes to understand why this employee was not selected."
+        ],
+        extra_fields={"assigned": False},
+    )
+
+
+def _find_non_assignment_explanation(
+    result: Mapping[str, Any],
+    *,
+    employee_id: int,
+    day: int,
+    shift: int,
+    role: str,
+) -> Mapping[str, Any]:
+    for explanation in result.get("non_assignment_explanations", []):
+        if (
+            int(explanation["employee_id"]) == employee_id
+            and int(explanation["day"]) == day
+            and int(explanation["shift"]) == shift
+            and str(explanation["role"]) == role
+        ):
+            return explanation
+    raise ExplanationTargetNotFoundError(
+        "No assignment or non-assignment explanation found for "
         f"employee {employee_id}, day {day}, shift {shift}, role {role}"
     )
 
