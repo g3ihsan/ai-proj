@@ -1711,6 +1711,33 @@ def test_api_recommendations_preserves_schema_error_status() -> None:
     assert response_payload["error"]["type"] == "SchemaValidationError"
 
 
+def test_api_recommendations_maps_scenario_validation_error_to_400(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_scenario_validation(_payload):
+        raise ScenarioValidationError("invalid scenario change")
+
+    monkeypatch.setattr(
+        api_module,
+        "recommendation_response_from_request",
+        _raise_scenario_validation,
+    )
+
+    response = _api_request(
+        "POST",
+        "/recommendations",
+        json_payload={
+            "goal": "reduce_shortages",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ScenarioValidationError"
+
+
 def test_api_recommendations_maps_scenario_evaluation_error_to_500(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

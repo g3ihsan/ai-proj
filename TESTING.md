@@ -194,6 +194,10 @@ recommendations are also capped through `limits.max_recommendations`; positive
 over-limit results are reported in `discarded_recommendations`. It does not use
 an LLM, does not generate schedules outside the solver, does not mutate the
 original solve request, and does not change normal `/solve` behavior.
+Scenario mutation validation rejects missing fields, booleans passed as
+integers, non-integer numeric fields, non-boolean availability targets, empty
+role strings, and malformed employee max-hours baselines with
+`ScenarioValidationError`.
 
 Run benchmark fixtures:
 

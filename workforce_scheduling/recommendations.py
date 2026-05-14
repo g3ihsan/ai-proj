@@ -483,7 +483,9 @@ def _apply_change(
     solve_request_payload: dict[str, Any],
     change: Mapping[str, Any],
 ) -> None:
-    change_type = change.get("type")
+    if not isinstance(change, Mapping):
+        raise ScenarioValidationError("scenario change must be an object")
+    change_type = _required_str_change_field(change, "type")
     if change_type == SCENARIO_TYPE_SET_AVAILABILITY:
         _apply_set_availability_change(solve_request_payload, change)
         return
@@ -497,20 +499,22 @@ def _apply_set_availability_change(
     solve_request_payload: dict[str, Any],
     change: Mapping[str, Any],
 ) -> None:
-    employee_id = int(change["employee_id"])
-    day = int(change["day"])
-    shift = int(change["shift"])
+    employee_id = _required_int_change_field(change, "employee_id")
+    day = _required_int_change_field(change, "day")
+    shift = _required_int_change_field(change, "shift")
+    _optional_str_change_field(change, "role")
+    to_value = _required_bool_change_field(change, "to")
     problem = _mapping_field(solve_request_payload, "problem")
     employees = _list_field(problem, "employees")
     for employee in employees:
-        if int(employee["employee_id"]) != employee_id:
+        if _required_int_change_field(employee, "employee_id") != employee_id:
             continue
         availability = _list_field(employee, "availability")
         if not _availability_in_bounds(availability, day, shift):
             raise ScenarioValidationError(
                 f"Availability index outside matrix for employee {employee_id}"
             )
-        availability[day][shift] = bool(change["to"])
+        availability[day][shift] = to_value
         return
     raise ScenarioValidationError(f"Unknown employee {employee_id}")
 
@@ -519,9 +523,9 @@ def _apply_increase_employee_max_hours_change(
     solve_request_payload: dict[str, Any],
     change: Mapping[str, Any],
 ) -> None:
-    employee_id = int(change["employee_id"])
-    new_max_hours = int(change["to"])
-    current_max_hours = int(change["from"])
+    employee_id = _required_int_change_field(change, "employee_id")
+    new_max_hours = _required_int_change_field(change, "to")
+    current_max_hours = _required_int_change_field(change, "from")
     if new_max_hours <= current_max_hours:
         raise ScenarioValidationError(
             "increase_employee_max_hours change must increase max_weekly_hours"
@@ -529,15 +533,70 @@ def _apply_increase_employee_max_hours_change(
     problem = _mapping_field(solve_request_payload, "problem")
     employees = _list_field(problem, "employees")
     for employee in employees:
-        if int(employee["employee_id"]) != employee_id:
+        if _required_int_change_field(employee, "employee_id") != employee_id:
             continue
-        if int(employee["max_weekly_hours"]) != current_max_hours:
+        existing_max_hours = _required_int_change_field(
+            employee,
+            "max_weekly_hours",
+        )
+        if existing_max_hours != current_max_hours:
             raise ScenarioValidationError(
                 f"max_weekly_hours baseline mismatch for employee {employee_id}"
             )
         employee["max_weekly_hours"] = new_max_hours
         return
     raise ScenarioValidationError(f"Unknown employee {employee_id}")
+
+
+def _required_int_change_field(
+    payload: Mapping[str, Any],
+    field: str,
+) -> int:
+    if field not in payload:
+        raise ScenarioValidationError(f"scenario change missing required field {field}")
+    value = payload[field]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ScenarioValidationError(
+            f"scenario change field {field} must be an integer"
+        )
+    return value
+
+
+def _required_bool_change_field(
+    payload: Mapping[str, Any],
+    field: str,
+) -> bool:
+    if field not in payload:
+        raise ScenarioValidationError(f"scenario change missing required field {field}")
+    value = payload[field]
+    if not isinstance(value, bool):
+        raise ScenarioValidationError(
+            f"scenario change field {field} must be a boolean"
+        )
+    return value
+
+
+def _required_str_change_field(
+    payload: Mapping[str, Any],
+    field: str,
+) -> str:
+    if field not in payload:
+        raise ScenarioValidationError(f"scenario change missing required field {field}")
+    value = payload[field]
+    if not isinstance(value, str) or not value.strip():
+        raise ScenarioValidationError(
+            f"scenario change field {field} must be a non-empty string"
+        )
+    return value.strip()
+
+
+def _optional_str_change_field(
+    payload: Mapping[str, Any],
+    field: str,
+) -> str | None:
+    if field not in payload:
+        return None
+    return _required_str_change_field(payload, field)
 
 
 def _assigned_hours_by_employee(result_payload: Mapping[str, Any]) -> dict[int, int]:

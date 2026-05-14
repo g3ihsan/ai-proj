@@ -2268,6 +2268,102 @@ def test_recommendations_reject_unknown_scenario_change_type() -> None:
     assert str(exc_info.value) == "Unsupported scenario change add_employee"
 
 
+@pytest.mark.parametrize(
+    ("change_patch", "message"),
+    [
+        ({"employee_id": True}, "scenario change field employee_id must be an integer"),
+        ({"day": True}, "scenario change field day must be an integer"),
+        ({"shift": "0"}, "scenario change field shift must be an integer"),
+        ({"role": ""}, "scenario change field role must be a non-empty string"),
+        ({"to": "true"}, "scenario change field to must be a boolean"),
+    ],
+)
+def test_recommendations_reject_invalid_set_availability_change_fields(
+    change_patch: Dict[str, object],
+    message: str,
+) -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+    change = {
+        "type": "set_availability",
+        "employee_id": 0,
+        "day": 0,
+        "shift": 0,
+        "role": "worker",
+        "to": True,
+        **change_patch,
+    }
+
+    with pytest.raises(ScenarioValidationError) as exc_info:
+        evaluate_scenario(
+            request_payload,
+            {
+                "scenario_id": "bad_availability_scenario",
+                "goal": "reduce_shortages",
+                "title": "Bad availability scenario",
+                "description": "Invalid availability change.",
+                "changes": [change],
+            },
+        )
+
+    assert str(exc_info.value) == message
+
+
+def test_recommendations_reject_missing_set_availability_change_field() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    with pytest.raises(ScenarioValidationError) as exc_info:
+        evaluate_scenario(
+            request_payload,
+            {
+                "scenario_id": "bad_availability_scenario",
+                "goal": "reduce_shortages",
+                "title": "Bad availability scenario",
+                "description": "Invalid availability change.",
+                "changes": [
+                    {
+                        "type": "set_availability",
+                        "employee_id": 0,
+                        "day": 0,
+                        "role": "worker",
+                        "to": True,
+                    }
+                ],
+            },
+        )
+
+    assert str(exc_info.value) == "scenario change missing required field shift"
+
+
+def test_recommendations_reject_non_object_scenario_change() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    with pytest.raises(ScenarioValidationError) as exc_info:
+        evaluate_scenario(
+            request_payload,
+            {
+                "scenario_id": "bad_scenario",
+                "goal": "reduce_shortages",
+                "title": "Bad scenario",
+                "description": "Invalid change.",
+                "changes": ["not-an-object"],
+            },
+        )
+
+    assert str(exc_info.value) == "scenario change must be an object"
+
+
 def test_recommendations_reject_non_increasing_max_hours_change() -> None:
     request_payload = solve_request_to_payload(
         _small_fully_feasible_problem(),
@@ -2300,6 +2396,95 @@ def test_recommendations_reject_non_increasing_max_hours_change() -> None:
     assert str(exc_info.value) == (
         "increase_employee_max_hours change must increase max_weekly_hours"
     )
+
+
+@pytest.mark.parametrize(
+    ("change_patch", "message"),
+    [
+        ({"employee_id": True}, "scenario change field employee_id must be an integer"),
+        ({"from": True}, "scenario change field from must be an integer"),
+        ({"to": "16"}, "scenario change field to must be an integer"),
+    ],
+)
+def test_recommendations_reject_invalid_max_hours_change_fields(
+    change_patch: Dict[str, object],
+    message: str,
+) -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+    change = {
+        "type": "increase_employee_max_hours",
+        "employee_id": 0,
+        "from": 40,
+        "to": 48,
+        **change_patch,
+    }
+
+    with pytest.raises(ScenarioValidationError) as exc_info:
+        evaluate_scenario(
+            request_payload,
+            {
+                "scenario_id": "bad_max_hours_scenario",
+                "goal": "reduce_shortages",
+                "title": "Bad max hours scenario",
+                "description": "Invalid max hours change.",
+                "changes": [change],
+            },
+        )
+
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.parametrize(
+    ("employee_patch", "message"),
+    [
+        ({}, "scenario change missing required field max_weekly_hours"),
+        (
+            {"max_weekly_hours": True},
+            "scenario change field max_weekly_hours must be an integer",
+        ),
+        (
+            {"max_weekly_hours": 32},
+            "max_weekly_hours baseline mismatch for employee 0",
+        ),
+    ],
+)
+def test_recommendations_reject_invalid_employee_max_hours_state(
+    employee_patch: Dict[str, object],
+    message: str,
+) -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+    employee = request_payload["problem"]["employees"][0]
+    employee.pop("max_weekly_hours")
+    employee.update(employee_patch)
+
+    with pytest.raises(ScenarioValidationError) as exc_info:
+        evaluate_scenario(
+            request_payload,
+            {
+                "scenario_id": "bad_max_hours_scenario",
+                "goal": "reduce_shortages",
+                "title": "Bad max hours scenario",
+                "description": "Invalid employee max hours.",
+                "changes": [
+                    {
+                        "type": "increase_employee_max_hours",
+                        "employee_id": 0,
+                        "from": 40,
+                        "to": 48,
+                    }
+                ],
+            },
+        )
+
+    assert str(exc_info.value) == message
 
 
 def test_explain_assignment_returns_non_assignment_explanation_when_not_assigned() -> None:

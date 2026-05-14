@@ -495,6 +495,10 @@ their original schema error type with HTTP 400. Internal scenario solve failures
 return `ScenarioEvaluationError` with HTTP 500. Scenario generation is decision
 support only: managers must still confirm whether the proposed availability
 change is operationally valid before using it as real input.
+Scenario mutation validation is strict: required change fields must be present,
+integer fields reject booleans and non-integers, boolean fields must be real
+booleans, role strings must be non-empty when provided, and malformed scenario
+changes return `ScenarioValidationError` with HTTP 400.
 
 ### `POST /solve-csv`
 
