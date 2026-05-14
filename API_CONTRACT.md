@@ -273,7 +273,12 @@ Success:
       "name": "fake",
       "uses_external_llm": false
     },
-    "grounding": {}
+    "grounding": {},
+    "source": {
+      "mode": "solve_request",
+      "kind": "summary",
+      "target": {}
+    }
   }
 }
 ```
@@ -281,7 +286,17 @@ Success:
 The narration prompt explicitly instructs any future provider to use only the
 provided evidence, avoid invented facts, avoid changing assignments or
 shortages, avoid legal/HR advice, and avoid claiming optimality unless
-`status=OPTIMAL`. Invalid narration payloads return `ExplanationNarrationError`.
+`status=OPTIMAL`. `source` is included only when narration was built from
+`solve_request`, `kind`, and `target`; direct explanation-payload narration does
+not add source metadata.
+
+Narration errors preserve the narrowest available error type:
+
+- invalid narration request shape: `ExplanationNarrationError`, HTTP 400
+- invalid target shape: `ExplanationQueryError`, HTTP 400
+- valid target with no deterministic evidence: `ExplanationTargetNotFoundError`, HTTP 404
+- invalid solve request/schema: original schema/solve validation error, HTTP 400
+- provider failure: `NarrationProviderError`, HTTP 502
 
 ### `POST /solve-csv`
 

@@ -16,6 +16,7 @@ import pytest
 from workforce_scheduling.ai_explanations import (
     ExplanationNarrationError,
     FakeNarrationProvider,
+    NarrationProviderError,
     build_explanation_prompt,
     narrate_explanation,
     narration_provider_from_name,
@@ -1436,6 +1437,26 @@ def test_ai_narration_rejects_invalid_explanation_payload() -> None:
         narrate_explanation({"type": "summary_explanation"}, FakeNarrationProvider())
 
     assert "explanation missing required field(s)" in str(exc_info.value)
+
+
+def test_ai_narration_provider_failure_uses_provider_error() -> None:
+    class FailingProvider:
+        name = "failing"
+        uses_external_llm = False
+
+        def narrate(self, prompt, explanation_payload):
+            _ = prompt
+            _ = explanation_payload
+            raise RuntimeError("provider failed")
+
+    result = solve(_small_fully_feasible_problem(), time_limit_sec=5.0, seed=1)
+    debug_payload = solve_result_to_payload(result, response_mode=RESPONSE_MODE_DEBUG)
+    summary = explain_summary(debug_payload)
+
+    with pytest.raises(NarrationProviderError) as exc_info:
+        narrate_explanation(summary, FailingProvider())
+
+    assert str(exc_info.value) == "provider failed"
 
 
 def test_explain_assignment_returns_non_assignment_explanation_when_not_assigned() -> None:

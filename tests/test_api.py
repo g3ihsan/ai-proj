@@ -661,18 +661,19 @@ def test_api_explain_narrate_accepts_solve_request_and_kind() -> None:
 
 
 def test_api_explain_narrate_accepts_solve_request_kind_and_target() -> None:
+    target = {
+        "employee_id": 0,
+        "day": 0,
+        "shift": 0,
+        "role": "worker",
+    }
     response = _api_request(
         "POST",
         "/explain/narrate",
         json_payload={
             "solve_request": _small_solve_request(),
             "kind": "assignment",
-            "target": {
-                "employee_id": 0,
-                "day": 0,
-                "shift": 0,
-                "role": "worker",
-            },
+            "target": target,
         },
     )
     result_payload = response.json()["result"]
@@ -687,6 +688,77 @@ def test_api_explain_narrate_accepts_solve_request_kind_and_target() -> None:
         "ASSIGNED_REST_COMPATIBLE",
         "ASSIGNED_WITHIN_HOURS",
     ]
+    assert result_payload["source"] == {
+        "mode": "solve_request",
+        "kind": "assignment",
+        "target": target,
+    }
+
+
+def test_api_explain_narrate_preserves_query_error_for_bad_target() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/narrate",
+        json_payload={
+            "solve_request": _small_solve_request(),
+            "kind": "assignment",
+            "target": {
+                "employee_id": True,
+                "day": 0,
+                "shift": 0,
+                "role": "worker",
+            },
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ExplanationQueryError"
+    assert response_payload["error"]["message"] == (
+        "Explanation target field employee_id must be an integer"
+    )
+
+
+def test_api_explain_narrate_preserves_target_not_found_error() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/narrate",
+        json_payload={
+            "solve_request": _small_solve_request(),
+            "kind": "assignment",
+            "target": {
+                "employee_id": 99,
+                "day": 0,
+                "shift": 0,
+                "role": "worker",
+            },
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 404
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ExplanationTargetNotFoundError"
+
+
+def test_api_explain_narrate_preserves_schema_error_for_bad_solve_request() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/narrate",
+        json_payload={
+            "solve_request": {"options": {"seed": 1}},
+            "kind": "summary",
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "SchemaValidationError"
+    assert response_payload["error"]["message"] == (
+        "Solve request must contain a problem object"
+    )
 
 
 def test_api_explain_narrate_rejects_unknown_kind() -> None:

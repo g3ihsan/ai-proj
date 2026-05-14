@@ -26,6 +26,7 @@ from .csv_adapter import (
 )
 from .explanations import (
     ExplanationQueryError,
+    ExplanationTargetNotFoundError,
     explain_assignment,
     explain_employee,
     explain_shift,
@@ -48,6 +49,7 @@ from .schemas import (
     MAX_TIME_LIMIT_SEC,
     RESPONSE_MODES,
     SCHEMA_VERSION,
+    SchemaValidationError,
     SolveOptions,
     error_payload,
     parse_solve_request,
@@ -290,13 +292,18 @@ async def explain_shift_endpoint(request: Request) -> JSONResponse:
 async def explain_narrate_endpoint(request: Request) -> JSONResponse:
     try:
         request_payload = await _json_request_payload(request)
-        explanation_payload = _narration_explanation_from_payload(request_payload)
+        explanation_payload, source_payload = _narration_source_from_payload(
+            request_payload
+        )
         provider = narration_provider_from_name(
             _narration_provider_name_from_payload(request_payload)
         )
+        result_payload = narrate_explanation(explanation_payload, provider)
+        if source_payload is not None:
+            result_payload["source"] = source_payload
         response_payload = {
             "ok": True,
-            "result": narrate_explanation(explanation_payload, provider),
+            "result": result_payload,
         }
     except Exception as exc:
         response_payload = _error_payload_for_request(exc, request)
@@ -604,15 +611,17 @@ def _target_from_payload(
     return target
 
 
-def _narration_explanation_from_payload(payload: Any) -> Any:
+def _narration_source_from_payload(
+    payload: Any,
+) -> tuple[Any, dict[str, Any] | None]:
     if not isinstance(payload, dict):
         raise ExplanationNarrationError("Narration request must be an object")
     if "solve_request" in payload:
         return _narration_explanation_from_solve_request(payload)
     if "explanation" in payload:
-        return payload["explanation"]
+        return payload["explanation"], None
     if payload.get("ok") is True and isinstance(payload.get("result"), dict):
-        return payload["result"]
+        return payload["result"], None
     required_explanation_keys = {
         "type",
         "status",
@@ -624,13 +633,15 @@ def _narration_explanation_from_payload(payload: Any) -> Any:
         "recommended_next_checks",
     }
     if required_explanation_keys <= set(payload):
-        return payload
+        return payload, None
     raise ExplanationNarrationError(
         "Narration request must contain an explanation object"
     )
 
 
-def _narration_explanation_from_solve_request(payload: dict[str, Any]) -> Any:
+def _narration_explanation_from_solve_request(
+    payload: dict[str, Any],
+) -> tuple[Any, dict[str, Any]]:
     kind = payload.get("kind")
     if not isinstance(kind, str) or not kind.strip():
         raise ExplanationNarrationError(
@@ -660,13 +671,31 @@ def _narration_explanation_from_solve_request(payload: dict[str, Any]) -> Any:
         target=target,
     )
     if not explanation_response.get("ok", False):
-        error = explanation_response.get("error", {})
-        if isinstance(error, dict):
-            raise ExplanationNarrationError(
-                f"Could not build deterministic explanation: {error.get('message', '')}"
-            )
+        _raise_from_explanation_error_payload(explanation_response)
+    return explanation_response["result"], {
+        "mode": "solve_request",
+        "kind": kind,
+        "target": target,
+    }
+
+
+def _raise_from_explanation_error_payload(payload: dict[str, Any]) -> None:
+    error = payload.get("error")
+    if not isinstance(error, dict):
         raise ExplanationNarrationError("Could not build deterministic explanation")
-    return explanation_response["result"]
+    error_type = error.get("type")
+    message = str(error.get("message", ""))
+    if error_type == "SchemaValidationError":
+        raise SchemaValidationError(message)
+    if error_type == "ExplanationQueryError":
+        raise ExplanationQueryError(message)
+    if error_type == "ExplanationTargetNotFoundError":
+        raise ExplanationTargetNotFoundError(message)
+    if error_type == "ExplanationNarrationError":
+        raise ExplanationNarrationError(message)
+    raise ExplanationNarrationError(
+        f"Could not build deterministic explanation: {message}"
+    )
 
 
 def _narration_provider_name_from_payload(payload: Any) -> Any:

@@ -150,7 +150,12 @@ configured provider is a fake deterministic provider for local use and tests, so
 no external LLM call is made. The narration layer must treat explanation
 payloads as read-only evidence: it may rewrite them, but it must not generate
 rosters, change assignments, invent shortages, or alter solver reasons. Invalid
-narration requests return `ExplanationNarrationError`.
+narration request shapes return `ExplanationNarrationError`. Invalid target
+shapes preserve `ExplanationQueryError`; valid targets with no deterministic
+evidence preserve `ExplanationTargetNotFoundError`; invalid solve requests
+preserve schema/solve validation error types; provider failures use
+`NarrationProviderError`. Narration responses include `source` metadata when
+they are built from `solve_request`, `kind`, and `target`.
 
 Run benchmark fixtures:
 

@@ -105,6 +105,10 @@ deterministic, so no external LLM call is made unless a future integration
 explicitly adds and configures one. Narration may rewrite explanation payloads
 into clearer language only; it must not generate schedules, change solver
 results, provide legal/HR advice, or infer facts absent from solver evidence.
+When narration composes deterministic explanations internally, target and schema
+errors preserve their original error types instead of being collapsed into a
+generic narration error. Narration responses built from `solve_request` include
+source metadata with the mode, kind, and normalized target.
 The current evidence contract version is `1`. Public evidence uses stable
 uppercase reason codes. Internal lowercase blocker names are deliberately mapped
 to those public codes; unknown internal blocker names should fail tests instead
