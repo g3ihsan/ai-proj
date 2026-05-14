@@ -139,6 +139,11 @@ Returned recommendations are capped at 5 as well; positive over-limit results
 are reported in `discarded_recommendations`. Recommendations are
 decision-support evidence, not automatic roster edits, and they do not add
 objectives, constraints, forecasting, or LLM-generated schedule changes.
+Recommendation explanation fields are deterministic text derived from scenario
+changes and solver comparison numbers. They describe why the scenario helped,
+what changed, expected shortage improvement, possible operational tradeoffs,
+and manager next checks. They do not introduce an LLM, change solver behavior,
+or alter scenario ranking.
 Scenario mutation validation is intentionally strict so malformed scenario
 changes fail at the recommendation boundary.
 

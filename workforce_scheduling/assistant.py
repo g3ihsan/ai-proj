@@ -452,14 +452,23 @@ def _recommendation_answer(recommendation_payload: Mapping[str, Any]) -> str:
         )
 
     best = _assistant_mapping_field(recommendations[0], "comparison")
+    explanation = _assistant_mapping_field(recommendations[0], "explanation")
+    manager_next_checks = _assistant_list_field(explanation, "manager_next_checks")
     title = str(recommendations[0]["title"])
+    next_check = (
+        " Next check: " + str(manager_next_checks[0])
+        if manager_next_checks
+        else ""
+    )
     return (
         prefix
         + " Best recommendation: "
         + title
-        + f"; shortage reduction {int(best['shortage_reduction'])}, "
+        + f"; {str(explanation['expected_improvement'])}"
+        + f" Shortage reduction {int(best['shortage_reduction'])}, "
         + f"from {int(best['baseline_total_shortage'])} to "
         + f"{int(best['scenario_total_shortage'])}."
+        + next_check
     )
 
 

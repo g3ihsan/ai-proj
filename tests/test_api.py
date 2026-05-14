@@ -1121,7 +1121,15 @@ def test_api_assistant_ask_routes_recommendation_question() -> None:
     assert result_payload["recommendation"]["recommendations"][0]["comparison"][
         "shortage_reduction"
     ] == 1
+    assert result_payload["recommendation"]["recommendations"][0][
+        "explanation"
+    ]["manager_next_checks"] == [
+        "Confirm the employee is actually available for the slot.",
+        "Confirm the change is operationally feasible before editing the roster.",
+        "Confirm this change follows local staffing policy.",
+    ]
     assert "Best recommendation:" in result_payload["message"]
+    assert "Next check:" in result_payload["message"]
     json.dumps(response_payload, sort_keys=True)
 
 
@@ -1600,6 +1608,9 @@ def test_api_recommendations_returns_grounded_shortage_reduction() -> None:
             "to": True,
         }
     ]
+    assert result_payload["recommendations"][0]["explanation"][
+        "expected_improvement"
+    ] == "Total shortage decreases from 1 to 0."
     assert result_payload["metadata"]["uses_external_llm"] is False
     assert result_payload["metadata"]["recommendation_type"] == "what_if"
     assert result_payload["metadata"]["supported_scenario_types"] == [
@@ -1642,6 +1653,9 @@ def test_api_recommendations_returns_grounded_max_hours_reduction() -> None:
     assert result_payload["recommendations"][0]["comparison"][
         "shortage_reduction"
     ] == 1
+    assert result_payload["recommendations"][0]["explanation"]["tradeoffs"] == [
+        "May increase workload or overtime risk for the employee."
+    ]
 
 
 def test_api_recommendations_returns_grounded_temporary_employee_reduction() -> None:
@@ -1676,6 +1690,28 @@ def test_api_recommendations_returns_grounded_temporary_employee_reduction() -> 
     assert result_payload["recommendations"][0]["comparison"][
         "shortage_reduction"
     ] == 1
+    assert result_payload["recommendations"][0]["explanation"] == {
+        "why_it_helps": (
+            "The baseline had an uncovered worker requirement on day 0 shift 0. "
+            "No existing-employee scenario was available for that slot, so "
+            "this scenario adds one qualified temporary employee and re-solves."
+        ),
+        "what_changes": [
+            "Adds temporary employee 1 with role worker.",
+            "Makes the temporary employee available only for day 0 shift 0.",
+        ],
+        "expected_improvement": "Total shortage decreases from 1 to 0.",
+        "tradeoffs": [
+            "May increase staffing cost because an additional employee is introduced.",
+            "Total objective value increases by 2049 under the solver scoring model.",
+        ],
+        "manager_next_checks": [
+            "Confirm a temporary worker is actually available.",
+            "Confirm the temporary staffing cost is acceptable.",
+            "Confirm the change is operationally feasible before editing the roster.",
+            "Confirm this change follows local staffing policy.",
+        ],
+    }
 
 
 def test_api_recommend_what_if_alias_matches_recommendations() -> None:

@@ -394,6 +394,10 @@ The recommendation endpoint evaluates small deterministic what-if scenarios
 against a baseline solve request. The response keeps
 `type=scenario_recommendations` for backward compatibility and includes
 `recommendation_type=what_if` plus `recommendation_contract_version=1`.
+Returned recommendation entries include a deterministic `explanation` object
+with `why_it_helps`, `what_changes`, `expected_improvement`, `tradeoffs`, and
+`manager_next_checks`. These fields are generated from the scenario change and
+solver comparison payload only; no external LLM or ungrounded planner is used.
 Version 1 supports only:
 
 - `reduce_shortages`
@@ -497,6 +501,50 @@ Success:
 }
 ```
 
+Recommendation entry example:
+
+```json
+{
+  "scenario_id": "add_temporary_employee_3_day_0_shift_1_role_worker",
+  "title": "Add temporary employee 3 for day 0 shift 1 as worker",
+  "message": "This scenario reduces total shortage by 1.",
+  "changes": [
+    {
+      "type": "add_temporary_employee",
+      "employee_id": 3,
+      "name": "Temporary worker day 0 shift 1",
+      "role": "worker",
+      "day": 0,
+      "shift": 1,
+      "hourly_cost": 20,
+      "max_weekly_hours": 8
+    }
+  ],
+  "comparison": {
+    "shortage_reduction": 1,
+    "baseline_total_shortage": 2,
+    "scenario_total_shortage": 1
+  },
+  "explanation": {
+    "why_it_helps": "The baseline had an uncovered worker requirement on day 0 shift 1. No existing-employee scenario was available for that slot, so this scenario adds one qualified temporary employee and re-solves.",
+    "what_changes": [
+      "Adds temporary employee 3 with role worker.",
+      "Makes the temporary employee available only for day 0 shift 1."
+    ],
+    "expected_improvement": "Total shortage decreases from 2 to 1.",
+    "tradeoffs": [
+      "May increase staffing cost because an additional employee is introduced."
+    ],
+    "manager_next_checks": [
+      "Confirm a temporary worker is actually available.",
+      "Confirm the temporary staffing cost is acceptable.",
+      "Confirm the change is operationally feasible before editing the roster.",
+      "Confirm this change follows local staffing policy."
+    ]
+  }
+}
+```
+
 `max_scenarios` is optional and capped at 5 for this in-process prototype.
 Candidate scenarios beyond the requested `max_scenarios` are not solved; they
 are returned in `discarded_scenarios` with `status=discarded` and
@@ -504,7 +552,9 @@ are returned in `discarded_scenarios` with `status=discarded` and
 `max_recommendations` is optional and capped at 5. Positive scenario results
 beyond that returned recommendation cap are reported in
 `discarded_recommendations` with `status=discarded` and
-`reason=MAX_RECOMMENDATION_LIMIT`.
+`reason=MAX_RECOMMENDATION_LIMIT`; discarded recommendation entries preserve
+the same deterministic `explanation` object so clients can show why a capped
+recommendation would have helped without treating it as returned top-N advice.
 Unsupported goals or invalid recommendation request shapes return
 `RecommendationError` with HTTP 400. Invalid solve request/schema errors retain
 their original schema error type with HTTP 400. Internal scenario solve failures
@@ -521,6 +571,9 @@ Recommendation evaluation deep-copies the solve request before applying
 scenario changes, so the original request payload is not mutated.
 Recommendations are scenario comparisons and decision-support evidence, not
 guarantees that managers should apply the change without operational review.
+Assistant recommendation answers summarize this deterministic recommendation
+payload and include the first grounded manager next-check from the best returned
+recommendation.
 
 ### `POST /solve-csv`
 

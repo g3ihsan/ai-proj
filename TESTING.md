@@ -201,6 +201,13 @@ integers, non-integer numeric fields, non-boolean availability targets, empty
 role strings, and malformed employee max-hours baselines with
 `ScenarioValidationError`.
 
+Recommendation contract tests now assert each returned positive recommendation
+includes deterministic manager-facing explanation fields: why the scenario
+helps, the concrete scenario changes, expected shortage improvement, possible
+tradeoffs, and manager next checks. Assistant recommendation tests assert the
+assistant summary remains deterministic, JSON-serializable, and uses the same
+grounded recommendation payload rather than a separate narration provider.
+
 Temporary employee hardening tests pin deterministic generation details:
 non-colliding `employee_id`, deterministic name, exactly one role matching the
 shortage role, availability dimensions matching problem days/shifts with only

@@ -2266,6 +2266,25 @@ def test_recommendations_reduce_shortages_with_grounded_scenario_solve() -> None
             "total_objective_delta"
         ],
     }
+    assert response["recommendations"][0]["explanation"] == {
+        "why_it_helps": (
+            "The baseline had an uncovered worker requirement on day 0 shift 0. "
+            "This scenario makes qualified employee 1 available for that "
+            "shortage slot."
+        ),
+        "what_changes": [
+            "Sets employee 1 availability to true for day 0 shift 0 as worker."
+        ],
+        "expected_improvement": "Total shortage decreases from 2 to 1.",
+        "tradeoffs": [
+            "Requires confirming the employee can actually work that slot."
+        ],
+        "manager_next_checks": [
+            "Confirm the employee is actually available for the slot.",
+            "Confirm the change is operationally feasible before editing the roster.",
+            "Confirm this change follows local staffing policy.",
+        ],
+    }
     assert response["evaluated_scenarios"][0]["snapshot"]["total_shortage"] == 1
     assert response["metadata"]["uses_external_llm"] is False
     assert response["metadata"]["recommendation_type"] == "what_if"
@@ -2321,6 +2340,25 @@ def test_recommendations_reduce_shortages_with_max_hours_scenario_solve() -> Non
         }
     ]
     assert response["recommendations"][0]["comparison"]["shortage_reduction"] == 1
+    assert response["recommendations"][0]["explanation"] == {
+        "why_it_helps": (
+            "The baseline had an uncovered worker requirement on day 0 shift 0, "
+            "and employee 0 was blocked by max weekly hours. This scenario "
+            "raises that limit and re-solves the same CP-SAT model."
+        ),
+        "what_changes": [
+            "Increases employee 0 max weekly hours from 8 to 16."
+        ],
+        "expected_improvement": "Total shortage decreases from 1 to 0.",
+        "tradeoffs": [
+            "May increase workload or overtime risk for the employee."
+        ],
+        "manager_next_checks": [
+            "Confirm the higher weekly-hours limit is allowed.",
+            "Confirm the change is operationally feasible before editing the roster.",
+            "Confirm this change follows local staffing policy.",
+        ],
+    }
     assert response["evaluated_scenarios"][0]["snapshot"]["total_shortage"] == 0
 
 
@@ -2360,6 +2398,28 @@ def test_recommendations_reduce_shortages_with_temporary_employee_scenario_solve
         }
     ]
     assert response["recommendations"][0]["comparison"]["shortage_reduction"] == 1
+    assert response["recommendations"][0]["explanation"] == {
+        "why_it_helps": (
+            "The baseline had an uncovered worker requirement on day 0 shift 0. "
+            "No existing-employee scenario was available for that slot, so "
+            "this scenario adds one qualified temporary employee and re-solves."
+        ),
+        "what_changes": [
+            "Adds temporary employee 1 with role worker.",
+            "Makes the temporary employee available only for day 0 shift 0.",
+        ],
+        "expected_improvement": "Total shortage decreases from 1 to 0.",
+        "tradeoffs": [
+            "May increase staffing cost because an additional employee is introduced.",
+            "Total objective value increases by 2049 under the solver scoring model.",
+        ],
+        "manager_next_checks": [
+            "Confirm a temporary worker is actually available.",
+            "Confirm the temporary staffing cost is acceptable.",
+            "Confirm the change is operationally feasible before editing the roster.",
+            "Confirm this change follows local staffing policy.",
+        ],
+    }
     assert response["evaluated_scenarios"][0]["snapshot"]["total_shortage"] == 0
 
 
@@ -2489,6 +2549,10 @@ def test_recommendations_reports_discarded_recommendations_at_limit() -> None:
         item["reason"]
         for item in response["discarded_recommendations"]
     } == {"MAX_RECOMMENDATION_LIMIT"}
+    assert all(
+        "explanation" in item
+        for item in response["discarded_recommendations"]
+    )
 
 
 def test_recommendations_reject_unsupported_goal() -> None:

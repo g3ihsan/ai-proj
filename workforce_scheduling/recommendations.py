@@ -366,11 +366,15 @@ def recommend_scenarios(
                     "scenario_id": evaluation["scenario_id"],
                     "title": evaluation["title"],
                     "message": (
-                        f"Reduced total shortage by "
+                        f"This scenario reduces total shortage by "
                         f"{comparison['shortage_reduction']}."
                     ),
                     "changes": evaluation["changes"],
                     "comparison": comparison,
+                    "explanation": build_recommendation_explanation(
+                        evaluation,
+                        comparison,
+                    ),
                 }
             )
 
@@ -458,7 +462,160 @@ def _discarded_recommendation(
         "title": recommendation["title"],
         "changes": [dict(change) for change in recommendation["changes"]],
         "comparison": dict(recommendation["comparison"]),
+        "explanation": dict(recommendation["explanation"]),
     }
+
+
+def build_recommendation_explanation(
+    scenario_evaluation: Mapping[str, Any],
+    comparison: Mapping[str, Any],
+) -> dict[str, Any]:
+    changes = _list_field(scenario_evaluation, "changes")
+    return {
+        "why_it_helps": _recommendation_why_it_helps(changes),
+        "what_changes": _recommendation_what_changes(changes),
+        "expected_improvement": _recommendation_expected_improvement(comparison),
+        "tradeoffs": _recommendation_tradeoffs(changes, comparison),
+        "manager_next_checks": _recommendation_next_checks(changes),
+    }
+
+
+def _recommendation_why_it_helps(changes: list[Any]) -> str:
+    if not changes:
+        return (
+            "The scenario was re-solved by the deterministic recommendation "
+            "engine and reduced shortage in the CP-SAT comparison."
+        )
+    change = _mapping_change(changes[0])
+    change_type = str(change.get("type", ""))
+    day = change.get("day")
+    shift = change.get("shift")
+    role = change.get("role")
+    slot = f"day {day} shift {shift}"
+    if change_type == SCENARIO_TYPE_SET_AVAILABILITY:
+        return (
+            f"The baseline had an uncovered {role} requirement on {slot}. "
+            f"This scenario makes qualified employee {change.get('employee_id')} "
+            "available for that shortage slot."
+        )
+    if change_type == SCENARIO_TYPE_INCREASE_EMPLOYEE_MAX_HOURS:
+        return (
+            f"The baseline had an uncovered {role} requirement on {slot}, and "
+            f"employee {change.get('employee_id')} was blocked by max weekly "
+            "hours. This scenario raises that limit and re-solves the same "
+            "CP-SAT model."
+        )
+    if change_type == SCENARIO_TYPE_ADD_TEMPORARY_EMPLOYEE:
+        return (
+            f"The baseline had an uncovered {role} requirement on {slot}. "
+            "No existing-employee scenario was available for that slot, so "
+            "this scenario adds one qualified temporary employee and re-solves."
+        )
+    return (
+        "The scenario was re-solved by the deterministic recommendation engine "
+        "and reduced shortage in the CP-SAT comparison."
+    )
+
+
+def _recommendation_what_changes(changes: list[Any]) -> list[str]:
+    descriptions: list[str] = []
+    for raw_change in changes:
+        change = _mapping_change(raw_change)
+        change_type = str(change.get("type", ""))
+        if change_type == SCENARIO_TYPE_SET_AVAILABILITY:
+            descriptions.append(
+                f"Sets employee {change.get('employee_id')} availability to "
+                f"{str(change.get('to')).lower()} for day {change.get('day')} "
+                f"shift {change.get('shift')} as {change.get('role')}."
+            )
+        elif change_type == SCENARIO_TYPE_INCREASE_EMPLOYEE_MAX_HOURS:
+            descriptions.append(
+                f"Increases employee {change.get('employee_id')} max weekly "
+                f"hours from {change.get('from')} to {change.get('to')}."
+            )
+        elif change_type == SCENARIO_TYPE_ADD_TEMPORARY_EMPLOYEE:
+            descriptions.extend(
+                [
+                    (
+                        f"Adds temporary employee {change.get('employee_id')} "
+                        f"with role {change.get('role')}."
+                    ),
+                    (
+                        "Makes the temporary employee available only for day "
+                        f"{change.get('day')} shift {change.get('shift')}."
+                    ),
+                ]
+            )
+        else:
+            descriptions.append(f"Applies scenario change {change_type}.")
+    return descriptions
+
+
+def _recommendation_expected_improvement(comparison: Mapping[str, Any]) -> str:
+    return (
+        "Total shortage decreases from "
+        f"{int(comparison['baseline_total_shortage'])} to "
+        f"{int(comparison['scenario_total_shortage'])}."
+    )
+
+
+def _recommendation_tradeoffs(
+    changes: list[Any],
+    comparison: Mapping[str, Any],
+) -> list[str]:
+    tradeoffs: list[str] = []
+    change_types = {
+        str(_mapping_change(change).get("type", ""))
+        for change in changes
+    }
+    if SCENARIO_TYPE_SET_AVAILABILITY in change_types:
+        tradeoffs.append(
+            "Requires confirming the employee can actually work that slot."
+        )
+    if SCENARIO_TYPE_INCREASE_EMPLOYEE_MAX_HOURS in change_types:
+        tradeoffs.append(
+            "May increase workload or overtime risk for the employee."
+        )
+    if SCENARIO_TYPE_ADD_TEMPORARY_EMPLOYEE in change_types:
+        tradeoffs.append(
+            "May increase staffing cost because an additional employee is introduced."
+        )
+    objective_delta = comparison.get("total_objective_delta")
+    if objective_delta is not None and int(objective_delta) > 0:
+        tradeoffs.append(
+            f"Total objective value increases by {int(objective_delta)} "
+            "under the solver scoring model."
+        )
+    if not tradeoffs:
+        tradeoffs.append(
+            "No additional tradeoff was detected in the deterministic comparison."
+        )
+    return tradeoffs
+
+
+def _recommendation_next_checks(changes: list[Any]) -> list[str]:
+    checks = [
+        "Confirm the change is operationally feasible before editing the roster.",
+        "Confirm this change follows local staffing policy.",
+    ]
+    change_types = {
+        str(_mapping_change(change).get("type", ""))
+        for change in changes
+    }
+    if SCENARIO_TYPE_SET_AVAILABILITY in change_types:
+        checks.insert(0, "Confirm the employee is actually available for the slot.")
+    if SCENARIO_TYPE_INCREASE_EMPLOYEE_MAX_HOURS in change_types:
+        checks.insert(0, "Confirm the higher weekly-hours limit is allowed.")
+    if SCENARIO_TYPE_ADD_TEMPORARY_EMPLOYEE in change_types:
+        checks.insert(0, "Confirm a temporary worker is actually available.")
+        checks.insert(1, "Confirm the temporary staffing cost is acceptable.")
+    return checks
+
+
+def _mapping_change(change: Any) -> Mapping[str, Any]:
+    if isinstance(change, Mapping):
+        return change
+    raise ScenarioValidationError("scenario change must be an object")
 
 
 def recommendation_response_from_request(payload: Mapping[str, Any]) -> dict[str, Any]:
