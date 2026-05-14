@@ -98,6 +98,11 @@ HTTP endpoints:
 - `GET /metadata`
 - `GET /viewer/`
 - `POST /solve`
+- `POST /explain/summary`
+- `POST /explain/shortages`
+- `POST /explain/assignment`
+- `POST /explain/employee`
+- `POST /explain/shift`
 - `POST /solve-csv`
 - `POST /solve-jobs`
 - `GET /solve-jobs/{job_id}`
@@ -123,6 +128,14 @@ All HTTP responses include `X-Request-ID`. Incoming `X-Request-ID` values are
 preserved; otherwise the API generates one. JSON solve routes reject request
 bodies larger than 1,000,000 bytes before parsing. `POST /solve-csv` rejects
 any uploaded CSV file larger than 1,000,000 bytes.
+
+Explanation endpoints are deterministic wrappers over the Solver Evidence
+Layer. They solve the canonical request with debug evidence internally, then
+return manager-readable explanation payloads in the normal envelope:
+`{"ok": true, "result": ...}`. They do not call an LLM and do not change solver
+decisions. Detail endpoints accept `{"solve_request": ..., "target": ...}`.
+For example, `/explain/assignment` target fields are `employee_id`, `day`,
+`shift`, and `role`.
 
 Run benchmark fixtures:
 

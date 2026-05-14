@@ -124,6 +124,11 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "health": "GET /health",
             "metadata": "GET /metadata",
             "solve": "POST /solve",
+            "explain_summary": "POST /explain/summary",
+            "explain_shortages": "POST /explain/shortages",
+            "explain_assignment": "POST /explain/assignment",
+            "explain_employee": "POST /explain/employee",
+            "explain_shift": "POST /explain/shift",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -169,6 +174,11 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
                     "request_id": "string",
                 },
             },
+        },
+        "explanation_endpoints": {
+            "source": "Solver Evidence Layer debug payload",
+            "uses_llm": False,
+            "response_shape": {"ok": True, "result": "Explanation payload"},
         },
         "job_execution": {
             "backend": "in_memory_thread_pool",
@@ -250,6 +260,82 @@ def test_api_preserves_incoming_request_id() -> None:
 
     assert response.status_code == 200
     assert response.headers["x-request-id"] == "req-123"
+
+
+def test_api_explain_summary_returns_deterministic_explanation() -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
+    request_payload = json.loads(fixture_path.read_text())
+    request_payload["options"]["response_mode"] = "compact"
+
+    response = _api_request("POST", "/explain/summary", json_payload=request_payload)
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["type"] == "summary_explanation"
+    assert result_payload["status"] == "OPTIMAL"
+    assert result_payload["evidence_contract_version"] == 1
+    assert result_payload["message"] == (
+        "The solver assigned 2 shifts with 0 total shortages."
+    )
+    assert result_payload["details"]["assignment_count"] == 2
+    assert result_payload["details"]["objective_breakdown"]["total_shortage"] == 0
+
+
+def test_api_explain_assignment_uses_targeted_evidence() -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
+    request_payload = json.loads(fixture_path.read_text())
+
+    response = _api_request(
+        "POST",
+        "/explain/assignment",
+        json_payload={
+            "solve_request": request_payload,
+            "target": {
+                "employee_id": 0,
+                "day": 0,
+                "shift": 0,
+                "role": "worker",
+            },
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["type"] == "assignment_explanation"
+    assert result_payload["details"]["assignment"] == {
+        "employee_id": 0,
+        "day": 0,
+        "shift": 0,
+        "role": "worker",
+    }
+    assert "ASSIGNED_AVAILABLE" in result_payload["reason_codes"]
+
+
+def test_api_explain_assignment_returns_404_for_missing_target() -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "solve_request_small.json"
+    request_payload = json.loads(fixture_path.read_text())
+
+    response = _api_request(
+        "POST",
+        "/explain/assignment",
+        json_payload={
+            "solve_request": request_payload,
+            "target": {
+                "employee_id": 99,
+                "day": 0,
+                "shift": 0,
+                "role": "worker",
+            },
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 404
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ExplanationTargetNotFoundError"
+    assert response_payload["error"]["request_id"] == response.headers["x-request-id"]
 
 
 def test_solve_job_executor_is_bounded() -> None:

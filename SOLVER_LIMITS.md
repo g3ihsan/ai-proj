@@ -109,9 +109,12 @@ optimization is an explicit lazy or mode-aware evidence construction path that
 preserves the same solved roster and objective values.
 
 `workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
-It exposes `GET /health`, `GET /metadata`, `POST /solve`, `POST /solve-csv`,
-`POST /solve-jobs`, `GET /solve-jobs/{job_id}`, and the static `GET /viewer/`
-roster viewer. `GET /viewer` redirects to `/viewer/`, and read-only demo CSV
+It exposes `GET /health`, `GET /metadata`, `POST /solve`, deterministic
+`POST /explain/*` endpoints, `POST /solve-csv`, `POST /solve-jobs`,
+`GET /solve-jobs/{job_id}`, and the static `GET /viewer/` roster viewer. The
+explanation endpoints format existing Solver Evidence Layer fields into
+manager-readable JSON payloads. They are not LLM endpoints and do not generate
+or modify schedules. `GET /viewer` redirects to `/viewer/`, and read-only demo CSV
 files are available below `/viewer/examples/`. The synchronous solve
 endpoint preserves the existing success/error envelope. The CSV upload endpoint
 is a thin multipart wrapper around the same three-file CSV adapter and returns

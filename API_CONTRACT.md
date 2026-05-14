@@ -6,6 +6,7 @@ thin boundaries:
 - in-process JSON: `solve_payload(...)`
 - HTTP: `workforce_scheduling.api`
 - files: JSON request files and three-file CSV input/output
+- deterministic explanations: `workforce_scheduling.explanations`
 
 The solver remains the source of truth. API, job, and CSV surfaces must not add
 solver objectives, constraints, persistence, or alternate scheduling behavior.
@@ -126,6 +127,64 @@ Error envelope:
   }
 }
 ```
+
+### Explanation Endpoints
+
+Explanation endpoints are deterministic wrappers over the Solver Evidence
+Layer. They solve the canonical request with debug evidence internally and
+return a manager-readable explanation payload in the same envelope shape:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "type": "summary_explanation",
+    "status": "OPTIMAL",
+    "title": "Roster explanation summary",
+    "message": "The solver assigned 12 shifts with 2 total shortages.",
+    "evidence_contract_version": 1,
+    "reason_codes": [],
+    "details": {},
+    "recommended_next_checks": []
+  }
+}
+```
+
+These endpoints do not call an LLM and do not change solver behavior,
+objectives, constraints, fairness, or warm-start behavior.
+
+Endpoints:
+
+- `POST /explain/summary`
+- `POST /explain/shortages`
+- `POST /explain/assignment`
+- `POST /explain/employee`
+- `POST /explain/shift`
+
+`/explain/summary` and `/explain/shortages` may accept the canonical solve
+request directly. Detail endpoints accept:
+
+```json
+{
+  "solve_request": {
+    "schema_version": 1,
+    "problem": {},
+    "options": {}
+  },
+  "target": {
+    "employee_id": 0,
+    "day": 0,
+    "shift": 0,
+    "role": "worker"
+  }
+}
+```
+
+Target fields:
+
+- `/explain/assignment`: `employee_id`, `day`, `shift`, `role`
+- `/explain/employee`: `employee_id`
+- `/explain/shift`: `day`, `shift`, optional `role`
 
 ### `POST /solve-csv`
 

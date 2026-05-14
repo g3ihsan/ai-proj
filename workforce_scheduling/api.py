@@ -18,6 +18,14 @@ from .csv_adapter import (
     payload_from_csv_files,
     write_solve_response_csv,
 )
+from .explanations import (
+    explain_assignment,
+    explain_employee,
+    explain_shift,
+    explain_shortages,
+    explain_summary,
+    solve_request_to_explanation_payload,
+)
 from .jobs import (
     InMemorySolveJobStore,
     JobCapacityError,
@@ -135,6 +143,11 @@ async def metadata() -> dict[str, Any]:
             "health": "GET /health",
             "metadata": "GET /metadata",
             "solve": "POST /solve",
+            "explain_summary": "POST /explain/summary",
+            "explain_shortages": "POST /explain/shortages",
+            "explain_assignment": "POST /explain/assignment",
+            "explain_employee": "POST /explain/employee",
+            "explain_shift": "POST /explain/shift",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -181,6 +194,11 @@ async def metadata() -> dict[str, Any]:
                 },
             },
         },
+        "explanation_endpoints": {
+            "source": "Solver Evidence Layer debug payload",
+            "uses_llm": False,
+            "response_shape": {"ok": True, "result": "Explanation payload"},
+        },
         "job_execution": {
             "backend": "in_memory_thread_pool",
             "max_workers": SOLVE_JOB_MAX_WORKERS,
@@ -208,6 +226,50 @@ async def solve_endpoint(request: Request) -> JSONResponse:
         status_code = 413
     _log_solve_route(request, "solve", response_payload, status_code)
     return JSONResponse(content=response_payload, status_code=status_code)
+
+
+@app.post("/explain/summary")
+async def explain_summary_endpoint(request: Request) -> JSONResponse:
+    return await _explanation_endpoint(request, "explain_summary", explain_summary)
+
+
+@app.post("/explain/shortages")
+async def explain_shortages_endpoint(request: Request) -> JSONResponse:
+    return await _explanation_endpoint(
+        request,
+        "explain_shortages",
+        explain_shortages,
+    )
+
+
+@app.post("/explain/assignment")
+async def explain_assignment_endpoint(request: Request) -> JSONResponse:
+    return await _explanation_endpoint(
+        request,
+        "explain_assignment",
+        explain_assignment,
+        required_target_keys=("employee_id", "day", "shift", "role"),
+    )
+
+
+@app.post("/explain/employee")
+async def explain_employee_endpoint(request: Request) -> JSONResponse:
+    return await _explanation_endpoint(
+        request,
+        "explain_employee",
+        explain_employee,
+        required_target_keys=("employee_id",),
+    )
+
+
+@app.post("/explain/shift")
+async def explain_shift_endpoint(request: Request) -> JSONResponse:
+    return await _explanation_endpoint(
+        request,
+        "explain_shift",
+        explain_shift,
+        required_target_keys=("day", "shift"),
+    )
 
 
 @app.post("/solve-csv", response_model=None)
@@ -407,6 +469,75 @@ def _log_solve_route(
         ok,
         error_type,
     )
+
+
+async def _explanation_endpoint(
+    request: Request,
+    route_name: str,
+    explainer,
+    required_target_keys: tuple[str, ...] = (),
+) -> JSONResponse:
+    try:
+        request_payload = await _json_request_payload(request)
+        solve_request_payload, target = _split_explanation_request(
+            request_payload,
+            required_target_keys=required_target_keys,
+        )
+        response_payload = solve_request_to_explanation_payload(
+            solve_request_payload,
+            explainer,
+            target=target,
+        )
+    except Exception as exc:
+        response_payload = _error_payload_for_request(exc, request)
+
+    response_payload = _with_request_id(response_payload, request)
+    status_code = 200 if response_payload["ok"] else 400
+    if _error_type(response_payload) == "RequestTooLargeError":
+        status_code = 413
+    if _error_type(response_payload) == "ExplanationTargetNotFoundError":
+        status_code = 404
+    _log_solve_route(request, route_name, response_payload, status_code)
+    return JSONResponse(content=response_payload, status_code=status_code)
+
+
+def _split_explanation_request(
+    payload: Any,
+    *,
+    required_target_keys: tuple[str, ...],
+) -> tuple[Any, dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return payload, {}
+    if "solve_request" not in payload:
+        return payload, _target_from_payload(payload, required_target_keys)
+
+    solve_request_payload = payload["solve_request"]
+    target = _target_from_payload(payload.get("target", {}), required_target_keys)
+    return solve_request_payload, target
+
+
+def _target_from_payload(
+    payload: Any,
+    required_target_keys: tuple[str, ...],
+) -> dict[str, Any]:
+    if not required_target_keys:
+        return {}
+    if not isinstance(payload, dict):
+        raise ValueError("Explanation target must be an object")
+    missing = [
+        key
+        for key in required_target_keys
+        if key not in payload
+    ]
+    if missing:
+        raise ValueError(f"Missing explanation target field(s): {', '.join(missing)}")
+    target = {key: payload[key] for key in payload if key in {*required_target_keys, "role"}}
+    for key in ("employee_id", "day", "shift"):
+        if key in target:
+            target[key] = int(target[key])
+    if "role" in target and target["role"] is not None:
+        target["role"] = str(target["role"])
+    return target
 
 
 def _frontend_response(filename: str, media_type: str) -> Response:

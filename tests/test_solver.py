@@ -31,6 +31,14 @@ from workforce_scheduling.benchmark import (
     _relative_optimality_gap_percent,
 )
 from workforce_scheduling.data import Employee, ProblemData, generate_synthetic_data
+from workforce_scheduling.explanations import (
+    explain_assignment,
+    explain_employee,
+    explain_shift,
+    explain_shortages,
+    explain_summary,
+    solve_request_to_explanation_payload,
+)
 from workforce_scheduling.solve import (
     Assignment,
     BLOCKER_REASON_CODE_MAP,
@@ -1313,6 +1321,77 @@ def test_non_assignment_evidence_always_has_reason_codes() -> None:
     assert all(
         explanation.reason_codes
         for explanation in result.non_assignment_explanations
+    )
+
+
+def test_explanation_helpers_return_json_safe_manager_payloads() -> None:
+    result = solve(_small_fully_feasible_problem(), time_limit_sec=5.0, seed=1)
+    debug_payload = solve_result_to_payload(result, response_mode=RESPONSE_MODE_DEBUG)
+
+    summary = explain_summary(debug_payload)
+    assignment = explain_assignment(
+        debug_payload,
+        employee_id=0,
+        day=0,
+        shift=0,
+        role="worker",
+    )
+    employee = explain_employee(debug_payload, employee_id=0)
+    shift = explain_shift(debug_payload, day=0, shift=0)
+    shortages = explain_shortages(debug_payload)
+
+    for explanation in (summary, assignment, employee, shift, shortages):
+        _assert_json_object_keys_are_strings(explanation)
+        json.loads(json.dumps(explanation))
+        assert {
+            "type",
+            "status",
+            "title",
+            "message",
+            "evidence_contract_version",
+            "reason_codes",
+            "details",
+            "recommended_next_checks",
+        } <= explanation.keys()
+        assert explanation["evidence_contract_version"] == 1
+
+    assert summary["type"] == "summary_explanation"
+    assert summary["message"] == "The solver assigned 2 shifts with 0 total shortages."
+    assert assignment["type"] == "assignment_explanation"
+    assert "ASSIGNED_AVAILABLE" in assignment["reason_codes"]
+    assert employee["details"]["employee_id"] == 0
+    assert shift["details"]["day"] == 0
+    assert shortages["details"]["total_shortage"] == 0
+
+
+def test_explanation_payload_forces_debug_evidence_without_changing_solution() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+        response_mode=RESPONSE_MODE_COMPACT,
+    )
+    solve_response = solve_payload(json.loads(json.dumps(request_payload)))
+    explanation_response = solve_request_to_explanation_payload(
+        json.loads(json.dumps(request_payload)),
+        explain_summary,
+    )
+
+    assert solve_response["ok"]
+    assert explanation_response["ok"]
+    assert set(solve_response["result"]) == {
+        "schema_version",
+        "metrics",
+        "assignments",
+        "shortages",
+        "violations",
+        "objective_breakdown",
+    }
+    assert explanation_response["result"]["details"]["assignment_count"] == len(
+        solve_response["result"]["assignments"]
+    )
+    assert explanation_response["result"]["details"]["objective_breakdown"] == (
+        solve_response["result"]["objective_breakdown"]
     )
 
 
