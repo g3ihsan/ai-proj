@@ -35,6 +35,7 @@ SHORTAGE_INSUFFICIENT_AVAILABLE_QUALIFIED = (
 SHORTAGE_REST_CONFLICT = "SHORTAGE_REST_CONFLICT"
 SHORTAGE_MAX_HOURS_LIMIT = "SHORTAGE_MAX_HOURS_LIMIT"
 SHORTAGE_DEMAND_EXCEEDS_CAPACITY = "SHORTAGE_DEMAND_EXCEEDS_CAPACITY"
+SHORTAGE_LOCAL_ASSIGNMENT_CONFLICT = "SHORTAGE_LOCAL_ASSIGNMENT_CONFLICT"
 
 BLOCKER_REASON_CODE_MAP = {
     "missing_role": BLOCKED_MISSING_ROLE,
@@ -588,10 +589,15 @@ def compute_demanded_slot_diagnostics(
                         currently_assignable_employee_ids=sorted(
                             candidate_employee_ids
                         ),
-                        blocked_employee_ids_by_reason={
-                            reason: sorted(employee_ids)
-                            for reason, employee_ids in blocked_by_reason.items()
-                        },
+                        blocked_employee_ids_by_reason=dict(
+                            sorted(
+                                (
+                                    reason,
+                                    sorted(employee_ids),
+                                )
+                                for reason, employee_ids in blocked_by_reason.items()
+                            )
+                        ),
                     )
                 )
 
@@ -610,7 +616,15 @@ def compute_assignment_explanations(
     weekly_hours = _assigned_hours_by_employee(data, assignments)
     explanations: List[AssignmentExplanation] = []
 
-    for assignment in assignments:
+    for assignment in sorted(
+        assignments,
+        key=lambda item: (
+            item.employee_id,
+            item.day,
+            item.shift,
+            item.role,
+        ),
+    ):
         employee = employee_index[assignment.employee_id]
         duration = shift_duration_hours(
             data.shift_start_hours,
@@ -885,11 +899,7 @@ def _assignment_reason_codes(
 
 
 def _blocker_reason_codes(blocker_reasons: List[str]) -> List[str]:
-    return [
-        BLOCKER_REASON_CODE_MAP[reason]
-        for reason in blocker_reasons
-        if reason in BLOCKER_REASON_CODE_MAP
-    ]
+    return [BLOCKER_REASON_CODE_MAP[reason] for reason in blocker_reasons]
 
 
 def _mapped_blocker_counts(diagnostic: SlotCandidateAnalysis) -> Dict[str, int]:
@@ -917,6 +927,8 @@ def _shortage_reason_codes(
         reason_codes.append(SHORTAGE_REST_CONFLICT)
     if blocker_counts.get(BLOCKED_MAX_HOURS, 0):
         reason_codes.append(SHORTAGE_MAX_HOURS_LIMIT)
+    if not reason_codes:
+        reason_codes.append(SHORTAGE_LOCAL_ASSIGNMENT_CONFLICT)
     return reason_codes
 
 

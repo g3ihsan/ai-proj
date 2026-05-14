@@ -97,6 +97,16 @@ It does not add constraints, objectives, heuristics, or alternate scheduling
 behavior. LLMs must treat this evidence as read-only solver output; they must
 not invent assignments, shortages, feasibility status, objective values, or
 blocker reasons.
+The current evidence contract version is `1`. Public evidence uses stable
+uppercase reason codes. Internal lowercase blocker names are deliberately mapped
+to those public codes; unknown internal blocker names should fail tests instead
+of being silently omitted from evidence. At present, evidence is computed as
+part of `solve(...)` before response-mode shaping, so compact and standard
+responses hide evidence fields but do not avoid the post-solve evidence
+computation cost. That is acceptable for the current sandbox scale. If debug
+evidence becomes a measurable bottleneck in larger workloads, the next safe
+optimization is an explicit lazy or mode-aware evidence construction path that
+preserves the same solved roster and objective values.
 
 `workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
 It exposes `GET /health`, `GET /metadata`, `POST /solve`, `POST /solve-csv`,

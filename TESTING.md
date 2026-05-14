@@ -35,8 +35,12 @@ used by the solver. Future assistants must consume this evidence instead of
 generating schedules directly. Evidence fields include
 `assignment_explanations`, `non_assignment_explanations`,
 `shortage_explanations`, `constraint_blockers`, and
-`decision_evidence_summary`. Compact and standard modes intentionally omit the
-AI-ready evidence fields.
+`decision_evidence_summary`. The evidence contract version is reported as
+`decision_evidence_summary.evidence_contract_version`. Compact and standard
+modes intentionally omit the AI-ready evidence fields. Internal lowercase
+blocker names must be mapped intentionally to stable public uppercase reason
+codes; tests fail if an emitted blocker is not represented in the public
+mapping.
 
 Run a three-file CSV solve:
 

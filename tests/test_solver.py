@@ -33,8 +33,10 @@ from workforce_scheduling.benchmark import (
 from workforce_scheduling.data import Employee, ProblemData, generate_synthetic_data
 from workforce_scheduling.solve import (
     Assignment,
+    BLOCKER_REASON_CODE_MAP,
     ObjectiveBreakdown,
     SolveResult,
+    _blocker_reason_codes,
     compute_objective_breakdown,
     solve,
     validate_solution,
@@ -569,6 +571,14 @@ def _non_assignment_reason_codes(
     raise AssertionError(
         f"Missing non-assignment explanation for {(employee_id, day, shift, role)}"
     )
+
+
+AI_EVIDENCE_FIELDS = {
+    "non_assignment_explanations",
+    "shortage_explanations",
+    "constraint_blockers",
+    "decision_evidence_summary",
+}
 
 
 def _brute_force_best_priority(
@@ -1211,6 +1221,29 @@ def test_shortage_evidence_includes_counts_and_blocker_summary() -> None:
     ] == [2]
 
 
+def test_shortage_evidence_always_has_reason_codes() -> None:
+    result = solve(_constrained_rest_window_problem(), time_limit_sec=5.0, seed=1)
+
+    assert result.shortage_explanations
+    assert all(explanation.reason_codes for explanation in result.shortage_explanations)
+
+
+def test_internal_blocker_reasons_are_all_mapped_to_public_reason_codes() -> None:
+    result = solve(_rest_evidence_problem(), time_limit_sec=5.0, seed=1)
+    emitted_reasons = {
+        reason
+        for diagnostic in result.demanded_slot_diagnostics
+        for reason in diagnostic.blocked_employee_ids_by_reason
+    }
+
+    assert emitted_reasons <= set(BLOCKER_REASON_CODE_MAP)
+
+
+def test_unknown_internal_blocker_reason_is_not_silently_ignored() -> None:
+    with pytest.raises(KeyError):
+        _blocker_reason_codes(["new_internal_constraint_reason"])
+
+
 def test_solver_evidence_is_deterministic_for_same_seed() -> None:
     data = _evidence_blocker_problem()
     result_a = solve(data, time_limit_sec=5.0, seed=11)
@@ -1226,6 +1259,51 @@ def test_solver_evidence_is_deterministic_for_same_seed() -> None:
         "decision_evidence_summary",
     ):
         assert payload_a[field] == payload_b[field]
+
+
+def test_debug_evidence_payload_has_stable_nested_ordering() -> None:
+    result = solve(_evidence_blocker_problem(), time_limit_sec=5.0, seed=1)
+    payload = solve_result_to_payload(result, response_mode=RESPONSE_MODE_DEBUG)
+
+    assert list(payload["constraint_blockers"]["blocker_counts"]) == sorted(
+        payload["constraint_blockers"]["blocker_counts"]
+    )
+    assert list(payload["constraint_blockers"]["employee_ids_by_reason"]) == sorted(
+        payload["constraint_blockers"]["employee_ids_by_reason"]
+    )
+    for employee_ids in payload["constraint_blockers"][
+        "employee_ids_by_reason"
+    ].values():
+        assert employee_ids == sorted(employee_ids)
+    for explanation in payload["shortage_explanations"]:
+        assert list(explanation["blocker_counts"]) == sorted(
+            explanation["blocker_counts"]
+        )
+        assert explanation["assigned_employee_ids"] == sorted(
+            explanation["assigned_employee_ids"]
+        )
+
+    non_assignment_keys = [
+        (
+            explanation["day"],
+            explanation["shift"],
+            explanation["role"],
+            explanation["employee_id"],
+        )
+        for explanation in payload["non_assignment_explanations"]
+    ]
+    assert non_assignment_keys == sorted(non_assignment_keys)
+
+    assignment_keys = [
+        (
+            explanation["employee_id"],
+            explanation["day"],
+            explanation["shift"],
+            explanation["role"],
+        )
+        for explanation in payload["assignment_explanations"]
+    ]
+    assert assignment_keys == sorted(assignment_keys)
 
 
 def test_non_assignment_evidence_always_has_reason_codes() -> None:
@@ -1268,6 +1346,9 @@ def test_solve_payload_response_modes_shape_result_without_changing_solution() -
     assert compact["objective_breakdown"] == standard["objective_breakdown"] == (
         debug["objective_breakdown"]
     )
+    assert compact["metrics"]["status"] == standard["metrics"]["status"] == (
+        debug["metrics"]["status"]
+    )
     assert set(compact) == {
         "schema_version",
         "metrics",
@@ -1288,18 +1369,9 @@ def test_solve_payload_response_modes_shape_result_without_changing_solution() -
     assert "shortage_diagnostics" in debug
     assert "demanded_slot_diagnostics" in debug
     assert "assignment_explanations" in debug
-    assert "non_assignment_explanations" not in compact
-    assert "shortage_explanations" not in compact
-    assert "constraint_blockers" not in compact
-    assert "decision_evidence_summary" not in compact
-    assert "non_assignment_explanations" not in standard
-    assert "shortage_explanations" not in standard
-    assert "constraint_blockers" not in standard
-    assert "decision_evidence_summary" not in standard
-    assert "non_assignment_explanations" in debug
-    assert "shortage_explanations" in debug
-    assert "constraint_blockers" in debug
-    assert "decision_evidence_summary" in debug
+    assert not (AI_EVIDENCE_FIELDS & set(compact))
+    assert not (AI_EVIDENCE_FIELDS & set(standard))
+    assert AI_EVIDENCE_FIELDS <= set(debug)
 
 
 def test_solve_payload_boundary_matches_direct_solver_output() -> None:

@@ -13,6 +13,7 @@ solver objectives, constraints, persistence, or alternate scheduling behavior.
 ## Versioning
 
 - `schema_version`: `1`
+- Solver Evidence Layer contract version: `1`
 - JSON is the canonical internal service contract.
 - CSV input is an adapter that builds the canonical JSON solve request.
 - CSV output is rendered from the canonical solve response envelope.
@@ -325,6 +326,12 @@ LLMs must consume this evidence as read-only source-of-truth context. They must
 not directly generate schedules, feasibility status, shortages, objective
 values, or blocker reasons.
 
+Evidence is post-solve local explanation evidence, not a formal global
+infeasibility proof. Lowercase internal blocker names are mapped deliberately to
+the stable uppercase public reason codes below. A new internal hard-constraint
+blocker must update that public mapping and its tests; unknown blockers should
+not be silently omitted.
+
 Stable reason codes include:
 
 - `ASSIGNED_AVAILABLE`
@@ -346,6 +353,7 @@ Stable reason codes include:
 - `SHORTAGE_REST_CONFLICT`
 - `SHORTAGE_MAX_HOURS_LIMIT`
 - `SHORTAGE_DEMAND_EXCEEDS_CAPACITY`
+- `SHORTAGE_LOCAL_ASSIGNMENT_CONFLICT`
 
 Example debug response snippet:
 
