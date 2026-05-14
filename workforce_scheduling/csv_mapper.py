@@ -10,6 +10,9 @@ CSV_TYPE_DEMAND = "demand"
 CSV_TYPE_SHIFTS = "shifts"
 MAPPING_STATUS_MAPPED = "mapped"
 MAPPING_STATUS_MISSING = "missing"
+APPLY_ACTION_RENAME = "rename_column"
+APPLY_ACTION_PRESERVE = "preserve_column"
+APPLY_ACTION_REVIEW = "requires_review"
 DAY_NAME_TOKENS = {
     "mon",
     "monday",
@@ -355,6 +358,201 @@ def validate_mapping(mapping_report: Mapping[str, Any]) -> dict[str, Any]:
     return dict(mapping_report)
 
 
+def csv_mapping_preview(
+    *,
+    csv_type: str,
+    headers: Sequence[str],
+    mapping: Mapping[str, Any] | None = None,
+    mapping_report: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    headers = _validated_headers(headers)
+    apply_plan = build_apply_plan(
+        csv_type=csv_type,
+        headers=headers,
+        mapping=mapping,
+        mapping_report=mapping_report,
+    )
+    source_report = _column_mapping_report(
+        csv_type=csv_type,
+        headers=headers,
+        mapping=mapping,
+        mapping_report=mapping_report,
+    )
+    return {
+        "type": "csv_mapping_preview",
+        "csv_mapping_contract_version": CSV_MAPPING_CONTRACT_VERSION,
+        "status": apply_plan["status"],
+        "csv_type": csv_type,
+        "headers": headers,
+        "mapping": source_report,
+        "apply_plan": apply_plan,
+        "uses_external_llm": False,
+        "will_mutate_files": False,
+        "will_solve": False,
+    }
+
+
+def preview_column_renames(
+    *,
+    csv_type: str,
+    headers: Sequence[str],
+    mapping: Mapping[str, Any] | None = None,
+    mapping_report: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    headers = _validated_headers(headers)
+    canonical_fields = _canonical_fields_for_csv_type(csv_type)
+    resolved_mapping = _resolved_mapping(
+        csv_type=csv_type,
+        headers=headers,
+        mapping=mapping,
+        mapping_report=mapping_report,
+    )
+    rename_actions: list[dict[str, Any]] = []
+
+    for field in canonical_fields:
+        source_headers = resolved_mapping.get(field, [])
+        if not source_headers:
+            continue
+        if field == "availability":
+            for source_header in source_headers:
+                normalized = normalize_header(source_header)
+                target_header = _availability_target_header(normalized)
+                status = (
+                    APPLY_ACTION_REVIEW
+                    if target_header is None
+                    else _rename_status(source_header, target_header)
+                )
+                action = {
+                    "canonical_field": field,
+                    "source_header": source_header,
+                    "target_header": target_header,
+                    "normalized_source_header": normalized,
+                    "action": status,
+                }
+                if status == APPLY_ACTION_REVIEW:
+                    action["reason"] = (
+                        "Availability header needs explicit day/shift index mapping "
+                        "before csv_adapter.py can parse it."
+                    )
+                rename_actions.append(action)
+            continue
+
+        source_header = source_headers[0]
+        target_header = field
+        rename_actions.append(
+            {
+                "canonical_field": field,
+                "source_header": source_header,
+                "target_header": target_header,
+                "normalized_source_header": normalize_header(source_header),
+                "action": _rename_status(source_header, target_header),
+            }
+        )
+
+    return rename_actions
+
+
+def build_apply_plan(
+    *,
+    csv_type: str,
+    headers: Sequence[str],
+    mapping: Mapping[str, Any] | None = None,
+    mapping_report: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    headers = _validated_headers(headers)
+    canonical_fields = _canonical_fields_for_csv_type(csv_type)
+    resolved_mapping = _resolved_mapping(
+        csv_type=csv_type,
+        headers=headers,
+        mapping=mapping,
+        mapping_report=mapping_report,
+    )
+    column_renames = preview_column_renames(
+        csv_type=csv_type,
+        headers=headers,
+        mapping=mapping,
+        mapping_report=mapping_report,
+    )
+    used_headers = {
+        source_header
+        for source_headers in resolved_mapping.values()
+        for source_header in source_headers
+    }
+    missing_fields = [
+        field for field in canonical_fields if not resolved_mapping.get(field)
+    ]
+    unresolved_actions = [
+        action
+        for action in column_renames
+        if action["action"] == APPLY_ACTION_REVIEW
+    ]
+    target_headers_by_source = {
+        action["source_header"]: action["target_header"]
+        for action in column_renames
+        if action["target_header"] is not None
+    }
+    canonical_headers_after_apply = [
+        target_headers_by_source.get(header, header)
+        for header in headers
+    ]
+    warnings = _apply_plan_warnings(
+        csv_type=csv_type,
+        missing_fields=missing_fields,
+        column_renames=column_renames,
+    )
+    status = (
+        "complete"
+        if not missing_fields and not unresolved_actions and not _duplicate_targets(column_renames)
+        else "needs_review"
+    )
+    return {
+        "type": "csv_mapping_apply_plan",
+        "csv_mapping_contract_version": CSV_MAPPING_CONTRACT_VERSION,
+        "status": status,
+        "csv_type": csv_type,
+        "will_mutate_files": False,
+        "will_solve": False,
+        "column_renames": column_renames,
+        "canonical_headers_after_apply": canonical_headers_after_apply,
+        "missing_fields": missing_fields,
+        "unmapped_headers": [
+            header for header in headers if header not in used_headers
+        ],
+        "warnings": warnings,
+    }
+
+
+def validate_apply_plan(apply_plan: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(apply_plan, Mapping):
+        raise CsvMappingValidationError("apply plan must be an object")
+    if apply_plan.get("type") != "csv_mapping_apply_plan":
+        raise CsvMappingValidationError("apply plan type is invalid")
+    csv_type = apply_plan.get("csv_type")
+    _canonical_fields_for_csv_type(csv_type)
+    if apply_plan.get("will_mutate_files") is not False:
+        raise CsvMappingValidationError("apply plan must not mutate files")
+    if apply_plan.get("will_solve") is not False:
+        raise CsvMappingValidationError("apply plan must not run the solver")
+    column_renames = apply_plan.get("column_renames")
+    if not isinstance(column_renames, list):
+        raise CsvMappingValidationError("apply plan column_renames must be a list")
+    duplicate_targets = _duplicate_targets(column_renames)
+    if duplicate_targets:
+        raise CsvMappingValidationError(
+            "apply plan has duplicate target header(s): "
+            + ", ".join(duplicate_targets)
+        )
+    if apply_plan.get("status") != "complete":
+        missing_fields = apply_plan.get("missing_fields")
+        if isinstance(missing_fields, list) and missing_fields:
+            raise CsvMappingValidationError(
+                f"{csv_type} apply plan missing required field(s): "
+                + ", ".join(str(field) for field in missing_fields)
+            )
+        raise CsvMappingValidationError("apply plan requires review before applying")
+    return dict(apply_plan)
+
+
 def csv_mapping_report(
     *,
     employee_headers: Sequence[str] | None = None,
@@ -378,6 +576,268 @@ def csv_mapping_report(
         "uses_external_llm": False,
         "files": files,
     }
+
+
+def _canonical_fields_for_csv_type(csv_type: Any) -> tuple[str, ...]:
+    if csv_type == CSV_TYPE_EMPLOYEES:
+        return EMPLOYEE_CANONICAL_FIELDS
+    if csv_type == CSV_TYPE_DEMAND:
+        return DEMAND_CANONICAL_FIELDS
+    if csv_type == CSV_TYPE_SHIFTS:
+        return SHIFT_CANONICAL_FIELDS
+    raise CsvMappingValidationError(f"Unsupported CSV mapping csv_type {csv_type}")
+
+
+def _column_mapping_report(
+    *,
+    csv_type: str,
+    headers: Sequence[str],
+    mapping: Mapping[str, Any] | None,
+    mapping_report: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if mapping is not None and mapping_report is not None:
+        raise CsvMappingValidationError(
+            "Provide either mapping or mapping_report, not both"
+        )
+    if mapping is not None:
+        return _explicit_mapping_report(csv_type=csv_type, headers=headers, mapping=mapping)
+    if mapping_report is not None:
+        return _extract_column_mapping_report(csv_type, mapping_report)
+    if csv_type == CSV_TYPE_EMPLOYEES:
+        return suggest_employee_column_mapping(headers)
+    if csv_type == CSV_TYPE_DEMAND:
+        return suggest_demand_column_mapping(headers)
+    if csv_type == CSV_TYPE_SHIFTS:
+        return suggest_shift_column_mapping(headers)
+    raise CsvMappingValidationError(f"Unsupported CSV mapping csv_type {csv_type}")
+
+
+def _resolved_mapping(
+    *,
+    csv_type: str,
+    headers: Sequence[str],
+    mapping: Mapping[str, Any] | None,
+    mapping_report: Mapping[str, Any] | None,
+) -> dict[str, list[str]]:
+    source_report = _column_mapping_report(
+        csv_type=csv_type,
+        headers=headers,
+        mapping=mapping,
+        mapping_report=mapping_report,
+    )
+    resolved: dict[str, list[str]] = {}
+    for field in _canonical_fields_for_csv_type(csv_type):
+        field_mapping = source_report.get("mapping", {}).get(field, {})
+        if field_mapping.get("status") != MAPPING_STATUS_MAPPED:
+            resolved[field] = []
+            continue
+        if field == "availability":
+            resolved[field] = list(field_mapping.get("source_headers", []))
+        else:
+            source_header = field_mapping.get("source_header")
+            resolved[field] = [source_header] if isinstance(source_header, str) else []
+        for source_header in resolved[field]:
+            if source_header not in headers:
+                raise CsvMappingValidationError(
+                    f"mapping field {field} references unknown header {source_header}"
+                )
+    return resolved
+
+
+def _explicit_mapping_report(
+    *,
+    csv_type: str,
+    headers: Sequence[str],
+    mapping: Mapping[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(mapping, Mapping):
+        raise CsvMappingValidationError("mapping must be an object")
+    canonical_fields = _canonical_fields_for_csv_type(csv_type)
+    normalized_headers = {header: normalize_header(header) for header in headers}
+    unknown_fields = sorted(str(field) for field in mapping if field not in canonical_fields)
+    if unknown_fields:
+        raise CsvMappingValidationError(
+            "mapping contains unsupported field(s): " + ", ".join(unknown_fields)
+        )
+
+    field_mappings: dict[str, Any] = {}
+    assigned_headers: set[str] = set()
+    for field in canonical_fields:
+        if field not in mapping:
+            field_mappings[field] = {
+                "status": MAPPING_STATUS_MISSING,
+                "source_header": None,
+                "normalized_header": None,
+                "confidence": 0.0,
+            }
+            continue
+        value = mapping[field]
+        source_headers = (
+            _required_header_list(value, headers, field)
+            if field == "availability"
+            else [_required_header_value(value, headers, field)]
+        )
+        for source_header in source_headers:
+            if source_header in assigned_headers:
+                raise CsvMappingValidationError(
+                    f"mapping source header {source_header} is assigned more than once"
+                )
+            assigned_headers.add(source_header)
+        if field == "availability":
+            field_mappings[field] = {
+                "status": MAPPING_STATUS_MAPPED,
+                "source_headers": source_headers,
+                "normalized_headers": [
+                    normalized_headers[source_header] for source_header in source_headers
+                ],
+                "confidence": 1.0,
+            }
+        else:
+            source_header = source_headers[0]
+            field_mappings[field] = {
+                "status": MAPPING_STATUS_MAPPED,
+                "source_header": source_header,
+                "normalized_header": normalized_headers[source_header],
+                "confidence": 1.0,
+            }
+
+    missing_fields = [
+        field
+        for field, field_mapping in field_mappings.items()
+        if field_mapping["status"] == MAPPING_STATUS_MISSING
+    ]
+    return {
+        "type": "csv_column_mapping",
+        "csv_mapping_contract_version": CSV_MAPPING_CONTRACT_VERSION,
+        "csv_type": csv_type,
+        "canonical_fields": list(canonical_fields),
+        "mapping": field_mappings,
+        "missing_fields": missing_fields,
+        "unmapped_headers": [
+            header for header in headers if header not in assigned_headers
+        ],
+        "warnings": _mapping_warnings(csv_type, field_mappings),
+        "valid": not missing_fields,
+        "uses_external_llm": False,
+    }
+
+
+def _extract_column_mapping_report(
+    csv_type: str,
+    mapping_report: Mapping[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(mapping_report, Mapping):
+        raise CsvMappingValidationError("mapping_report must be an object")
+    if mapping_report.get("type") == "csv_mapping_report":
+        files = mapping_report.get("files")
+        if not isinstance(files, Mapping) or csv_type not in files:
+            raise CsvMappingValidationError(
+                f"mapping_report does not contain csv_type {csv_type}"
+            )
+        file_report = files[csv_type]
+        if not isinstance(file_report, Mapping):
+            raise CsvMappingValidationError("mapping_report file entry must be an object")
+        return dict(file_report)
+    if mapping_report.get("type") == "csv_column_mapping":
+        if mapping_report.get("csv_type") != csv_type:
+            raise CsvMappingValidationError("mapping_report csv_type does not match")
+        return dict(mapping_report)
+    raise CsvMappingValidationError("mapping_report type is invalid")
+
+
+def _required_header_value(value: Any, headers: Sequence[str], field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CsvMappingValidationError(f"mapping field {field} must be a header string")
+    value = value.strip()
+    if value not in headers:
+        raise CsvMappingValidationError(
+            f"mapping field {field} references unknown header {value}"
+        )
+    return value
+
+
+def _required_header_list(
+    value: Any,
+    headers: Sequence[str],
+    field: str,
+) -> list[str]:
+    if isinstance(value, str):
+        return [_required_header_value(value, headers, field)]
+    if isinstance(value, Sequence):
+        source_headers = [
+            _required_header_value(source_header, headers, field)
+            for source_header in value
+        ]
+        if not source_headers:
+            raise CsvMappingValidationError(
+                f"mapping field {field} must include at least one header"
+            )
+        return source_headers
+    raise CsvMappingValidationError(
+        f"mapping field {field} must be a header string or list"
+    )
+
+
+def _availability_target_header(normalized_header: str) -> str | None:
+    for pattern in (
+        r"(?:available|avail)_day_?(?P<day>\d+)_shift_?(?P<shift>\d+)",
+        r"(?:available|avail)_d_?(?P<day>\d+)_s_?(?P<shift>\d+)",
+    ):
+        match = re.fullmatch(pattern, normalized_header)
+        if match:
+            return (
+                f"available_day{int(match.group('day'))}"
+                f"_shift{int(match.group('shift'))}"
+            )
+    if normalized_header in FIELD_ALIASES[CSV_TYPE_EMPLOYEES]["availability"]:
+        return "availability"
+    return None
+
+
+def _rename_status(source_header: str, target_header: str) -> str:
+    if normalize_header(source_header) == target_header:
+        return APPLY_ACTION_PRESERVE
+    return APPLY_ACTION_RENAME
+
+
+def _apply_plan_warnings(
+    *,
+    csv_type: str,
+    missing_fields: Sequence[str],
+    column_renames: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    warnings: list[str] = []
+    if missing_fields:
+        warnings.append(
+            "Apply plan is incomplete until missing canonical fields are mapped."
+        )
+    if any(action.get("action") == APPLY_ACTION_REVIEW for action in column_renames):
+        warnings.append(
+            "One or more availability headers need explicit day/shift indexes "
+            "before csv_adapter.py can parse them."
+        )
+    duplicate_targets = _duplicate_targets(column_renames)
+    if duplicate_targets:
+        warnings.append(
+            "Multiple source headers map to the same target header(s): "
+            + ", ".join(duplicate_targets)
+        )
+    if csv_type == CSV_TYPE_EMPLOYEES and any(
+        action.get("target_header") == "availability" for action in column_renames
+    ):
+        warnings.append(
+            "Compact availability must still match the expected day/shift matrix."
+        )
+    return warnings
+
+
+def _duplicate_targets(column_renames: Sequence[Mapping[str, Any]]) -> list[str]:
+    targets = [
+        action.get("target_header")
+        for action in column_renames
+        if isinstance(action.get("target_header"), str)
+    ]
+    return sorted(_duplicates(targets))
 
 
 def _suggest_column_mapping(

@@ -31,6 +31,7 @@ from .csv_mapper import (
     CSV_TYPE_EMPLOYEES,
     CSV_TYPE_SHIFTS,
     CsvMappingValidationError,
+    csv_mapping_preview,
     csv_mapping_report,
 )
 from .explanations import (
@@ -180,6 +181,7 @@ async def metadata() -> dict[str, Any]:
             "recommendations": "POST /recommendations",
             "recommend_what_if": "POST /recommend/what-if",
             "csv_mapping_suggest": "POST /csv/mapping/suggest",
+            "csv_mapping_preview": "POST /csv/mapping/preview",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -195,10 +197,13 @@ async def metadata() -> dict[str, Any]:
             "response_media_type": "text/csv",
         },
         "csv_mapper": {
-            "source": "Deterministic CSV header mapping suggestions",
+            "source": "Deterministic CSV header mapping suggestions and previews",
             "csv_mapping_contract_version": CSV_MAPPING_CONTRACT_VERSION,
             "uses_external_llm": False,
-            "response_shape": {"ok": True, "result": "CSV mapping report"},
+            "response_shape": {
+                "ok": True,
+                "result": "CSV mapping report or preview",
+            },
         },
         "solve_options": {
             "time_limit_sec": {
@@ -422,6 +427,25 @@ async def csv_mapping_suggest_endpoint(request: Request) -> JSONResponse:
     return JSONResponse(content=response_payload, status_code=status_code)
 
 
+@app.post("/csv/mapping/preview")
+async def csv_mapping_preview_endpoint(request: Request) -> JSONResponse:
+    try:
+        request_payload = await _json_request_payload(request)
+        response_payload = {
+            "ok": True,
+            "result": _csv_mapping_preview_from_payload(request_payload),
+        }
+    except Exception as exc:
+        response_payload = _error_payload_for_request(exc, request)
+
+    response_payload = _with_request_id(response_payload, request)
+    status_code = 200 if response_payload["ok"] else 400
+    if _error_type(response_payload) == "RequestTooLargeError":
+        status_code = 413
+    _log_solve_route(request, "csv_mapping_preview", response_payload, status_code)
+    return JSONResponse(content=response_payload, status_code=status_code)
+
+
 async def _recommendations_endpoint(
     request: Request,
     route_name: str,
@@ -622,6 +646,27 @@ def _single_csv_mapping_report_from_payload(payload: dict[str, Any]) -> dict[str
     if csv_type == CSV_TYPE_SHIFTS:
         return csv_mapping_report(shift_headers=headers)
     raise CsvMappingValidationError(f"Unsupported CSV mapping csv_type {csv_type}")
+
+
+def _csv_mapping_preview_from_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise CsvMappingValidationError("CSV mapping preview request must be an object")
+    csv_type = payload.get("csv_type")
+    if not isinstance(csv_type, str) or not csv_type.strip():
+        raise CsvMappingValidationError(
+            "CSV mapping preview request csv_type must be a string"
+        )
+    if "headers" not in payload:
+        raise CsvMappingValidationError(
+            "CSV mapping preview request must include headers"
+        )
+    csv_type = csv_type.strip()
+    return csv_mapping_preview(
+        csv_type=csv_type,
+        headers=payload["headers"],
+        mapping=payload.get("mapping"),
+        mapping_report=payload.get("mapping_report"),
+    )
 
 
 def _optional_header_list(payload: dict[str, Any], key: str) -> Any:

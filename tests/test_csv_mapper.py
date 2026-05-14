@@ -7,12 +7,16 @@ import pytest
 from workforce_scheduling.csv_mapper import (
     CsvMappingError,
     CsvMappingValidationError,
+    build_apply_plan,
     csv_mapping_report,
+    csv_mapping_preview,
     mapping_confidence,
     normalize_header,
+    preview_column_renames,
     suggest_demand_column_mapping,
     suggest_employee_column_mapping,
     suggest_shift_column_mapping,
+    validate_apply_plan,
     validate_mapping,
 )
 
@@ -214,6 +218,174 @@ def test_csv_mapping_report_combines_files_and_status() -> None:
     assert report["uses_external_llm"] is False
     assert sorted(report["files"]) == ["demand", "employees", "shifts"]
     json.dumps(report, sort_keys=True)
+
+
+def test_csv_mapping_preview_builds_explicit_apply_plan_without_mutation() -> None:
+    headers = [
+        "Staff ID",
+        "Full Name",
+        "Skills",
+        "Cost Per Hour",
+        "Weekly Limit",
+        "Available Day0 Shift0",
+    ]
+    preview = csv_mapping_preview(
+        csv_type="employees",
+        headers=headers,
+        mapping={
+            "employee_id": "Staff ID",
+            "name": "Full Name",
+            "roles": "Skills",
+            "hourly_cost": "Cost Per Hour",
+            "max_weekly_hours": "Weekly Limit",
+            "availability": ["Available Day0 Shift0"],
+        },
+    )
+
+    assert preview["type"] == "csv_mapping_preview"
+    assert preview["status"] == "complete"
+    assert preview["headers"] == headers
+    assert headers == [
+        "Staff ID",
+        "Full Name",
+        "Skills",
+        "Cost Per Hour",
+        "Weekly Limit",
+        "Available Day0 Shift0",
+    ]
+    assert preview["uses_external_llm"] is False
+    assert preview["will_mutate_files"] is False
+    assert preview["will_solve"] is False
+    apply_plan = preview["apply_plan"]
+    assert apply_plan["type"] == "csv_mapping_apply_plan"
+    assert apply_plan["will_mutate_files"] is False
+    assert apply_plan["will_solve"] is False
+    assert apply_plan["canonical_headers_after_apply"] == [
+        "employee_id",
+        "name",
+        "roles",
+        "hourly_cost",
+        "max_weekly_hours",
+        "available_day0_shift0",
+    ]
+    assert apply_plan["missing_fields"] == []
+    assert apply_plan["warnings"] == []
+    assert apply_plan["column_renames"][0] == {
+        "canonical_field": "employee_id",
+        "source_header": "Staff ID",
+        "target_header": "employee_id",
+        "normalized_source_header": "staff_id",
+        "action": "rename_column",
+    }
+    assert apply_plan["column_renames"][-1] == {
+        "canonical_field": "availability",
+        "source_header": "Available Day0 Shift0",
+        "target_header": "available_day0_shift0",
+        "normalized_source_header": "available_day0_shift0",
+        "action": "preserve_column",
+    }
+    validate_apply_plan(apply_plan)
+    json.dumps(preview, sort_keys=True)
+
+
+def test_csv_mapping_preview_can_use_suggested_mapping_report() -> None:
+    headers = ["Day Index", "Shift Name", "Required Role", "Headcount"]
+    report = suggest_demand_column_mapping(headers)
+
+    preview = csv_mapping_preview(
+        csv_type="demand",
+        headers=headers,
+        mapping_report=report,
+    )
+
+    assert preview["status"] == "complete"
+    assert preview["mapping"] == report
+    assert preview["apply_plan"]["canonical_headers_after_apply"] == [
+        "day",
+        "shift",
+        "role",
+        "required",
+    ]
+
+
+def test_csv_mapping_preview_marks_day_name_availability_for_review() -> None:
+    preview = csv_mapping_preview(
+        csv_type="employees",
+        headers=[
+            "Staff ID",
+            "Full Name",
+            "Skills",
+            "Hourly Rate",
+            "Weekly Hours Limit",
+            "Available Monday Morning",
+        ],
+    )
+
+    assert preview["status"] == "needs_review"
+    availability_action = preview["apply_plan"]["column_renames"][-1]
+    assert availability_action["canonical_field"] == "availability"
+    assert availability_action["source_header"] == "Available Monday Morning"
+    assert availability_action["target_header"] is None
+    assert availability_action["action"] == "requires_review"
+    assert preview["apply_plan"]["warnings"] == [
+        (
+            "One or more availability headers need explicit day/shift indexes "
+            "before csv_adapter.py can parse them."
+        )
+    ]
+    with pytest.raises(CsvMappingValidationError, match="requires review"):
+        validate_apply_plan(preview["apply_plan"])
+
+
+def test_csv_mapping_preview_reports_missing_fields_for_partial_mapping() -> None:
+    apply_plan = build_apply_plan(
+        csv_type="employees",
+        headers=["Staff ID", "Full Name", "Cost Per Hour"],
+        mapping={
+            "employee_id": "Staff ID",
+            "name": "Full Name",
+            "hourly_cost": "Cost Per Hour",
+        },
+    )
+
+    assert apply_plan["status"] == "needs_review"
+    assert apply_plan["missing_fields"] == [
+        "roles",
+        "max_weekly_hours",
+        "availability",
+    ]
+    assert apply_plan["unmapped_headers"] == []
+    with pytest.raises(CsvMappingValidationError) as exc_info:
+        validate_apply_plan(apply_plan)
+
+    assert str(exc_info.value) == (
+        "employees apply plan missing required field(s): "
+        "roles, max_weekly_hours, availability"
+    )
+
+
+def test_preview_column_renames_rejects_invalid_explicit_mapping() -> None:
+    with pytest.raises(CsvMappingValidationError, match="unsupported field"):
+        preview_column_renames(
+            csv_type="employees",
+            headers=["Staff ID"],
+            mapping={"unknown": "Staff ID"},
+        )
+    with pytest.raises(CsvMappingValidationError, match="unknown header Missing"):
+        preview_column_renames(
+            csv_type="employees",
+            headers=["Staff ID"],
+            mapping={"employee_id": "Missing"},
+        )
+    with pytest.raises(CsvMappingValidationError, match="not both"):
+        preview_column_renames(
+            csv_type="employees",
+            headers=["Staff ID"],
+            mapping={"employee_id": "Staff ID"},
+            mapping_report=suggest_employee_column_mapping(
+                ["Staff ID", "Name", "Role", "Rate", "Max Hours", "Availability"]
+            ),
+        )
 
 
 def test_csv_mapping_report_marks_needs_review_when_any_file_is_incomplete() -> None:

@@ -684,6 +684,90 @@ empty header lists, duplicate normalized headers, or non-string headers return
 HTTP 400 with `CsvMappingValidationError` or `CsvMappingError`. Oversized JSON
 requests return HTTP 413.
 
+### `POST /csv/mapping/preview`
+
+Returns a deterministic preview/apply plan for one dataset. This endpoint shows
+how a proposed or inferred header mapping would rename columns before canonical
+CSV parsing. It does not mutate uploaded files, parse row data, run the solver,
+call an external LLM/API, or change `/solve-csv` behavior.
+
+Request with explicit mapping:
+
+```json
+{
+  "csv_type": "employees",
+  "headers": [
+    "Staff ID",
+    "Full Name",
+    "Skills",
+    "Cost Per Hour",
+    "Weekly Limit",
+    "Available Day0 Shift0"
+  ],
+  "mapping": {
+    "employee_id": "Staff ID",
+    "name": "Full Name",
+    "roles": "Skills",
+    "hourly_cost": "Cost Per Hour",
+    "max_weekly_hours": "Weekly Limit",
+    "availability": ["Available Day0 Shift0"]
+  }
+}
+```
+
+`mapping` is optional. If omitted, the endpoint uses the deterministic mapper
+suggestions. `mapping_report` may also be supplied instead of `mapping`.
+Supplying both returns HTTP 400. Partial mappings are allowed and return
+`status=needs_review` with `missing_fields`.
+
+Response:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "type": "csv_mapping_preview",
+    "csv_mapping_contract_version": 1,
+    "status": "complete",
+    "csv_type": "employees",
+    "headers": ["Staff ID", "Full Name"],
+    "uses_external_llm": false,
+    "will_mutate_files": false,
+    "will_solve": false,
+    "mapping": {
+      "type": "csv_column_mapping"
+    },
+    "apply_plan": {
+      "type": "csv_mapping_apply_plan",
+      "status": "complete",
+      "will_mutate_files": false,
+      "will_solve": false,
+      "column_renames": [
+        {
+          "canonical_field": "employee_id",
+          "source_header": "Staff ID",
+          "target_header": "employee_id",
+          "normalized_source_header": "staff_id",
+          "action": "rename_column"
+        }
+      ],
+      "canonical_headers_after_apply": ["employee_id", "name"],
+      "missing_fields": [],
+      "unmapped_headers": [],
+      "warnings": []
+    }
+  }
+}
+```
+
+Employee availability preview distinguishes adapter-ready headers from advisory
+headers. Compact `availability` remains compact and carries the existing matrix
+warning. Explicit day/shift variants such as `Avail D0 S0` are previewed as
+`available_day0_shift0`. Day-name variants such as `Available Monday Morning`
+are recognized as availability evidence but return `action=requires_review`
+because they do not encode the zero-based day/shift indexes required by
+`csv_adapter.py`.
+
 ### `POST /solve-csv`
 
 Accepts three uploaded CSV files, solves through the same canonical JSON
@@ -970,7 +1054,10 @@ adapter. Mapper reports include `uses_external_llm=false`, suggested source
 headers, normalized headers, confidence scores, missing fields, unmapped
 headers, warnings, and validation status. Incomplete reports are advisory and
 must be reviewed before files are renamed or transformed into the canonical CSV
-contract below.
+contract below. The optional preview/apply-plan endpoint shows deterministic
+column rename actions, `canonical_headers_after_apply`, unmapped headers,
+missing fields, review warnings, and explicit `will_mutate_files=false` /
+`will_solve=false` flags.
 
 ### `employees.csv`
 

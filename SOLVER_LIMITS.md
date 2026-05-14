@@ -60,6 +60,12 @@ external LLM/API, or bypass `csv_adapter.py` validation.
 run the solver or change `/solve-csv` behavior. It accepts both combined
 multi-file header requests and single-dataset `csv_type` plus `headers`
 requests.
+`POST /csv/mapping/preview` exposes a deterministic single-dataset apply plan
+for proposed or inferred header mappings. It reports column rename actions,
+canonical headers after apply, missing fields, unmapped headers, and review
+warnings with `will_mutate_files=false` and `will_solve=false`; clients must
+still apply any file transformation outside the solver and then pass canonical
+CSV files through `csv_adapter.py`.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.

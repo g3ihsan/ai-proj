@@ -68,6 +68,11 @@ returns `complete` or `needs_review` reports without solving, rejects invalid
 header shapes with HTTP 400, and preserves the normal JSON request-size limit.
 Availability header tests cover canonical day/shift columns and common
 day-name variants such as `Available Monday Morning`.
+`POST /csv/mapping/preview` returns a deterministic preview/apply plan for one
+dataset. Tests cover explicit mappings, inferred mappings, day-name
+availability headers that require review, invalid preview requests, JSON
+serializability, deterministic output, and the fact that preview calls do not
+change `/solve-csv` behavior.
 
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:
