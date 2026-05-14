@@ -15,6 +15,7 @@ REQUIRED_EXPLANATION_FIELDS = {
     "details",
     "recommended_next_checks",
 }
+DEFAULT_NARRATION_PROVIDER = "fake"
 
 
 class ExplanationNarrationError(ValueError):
@@ -59,6 +60,31 @@ class FakeNarrationProvider:
             lines.append("Next checks: " + " ".join(checks))
         lines.append("This narration is based only on deterministic solver evidence.")
         return " ".join(lines)
+
+
+def narration_provider_from_name(name: str | None) -> NarrationProvider:
+    provider_name = DEFAULT_NARRATION_PROVIDER if name is None else name
+    if not isinstance(provider_name, str) or not provider_name.strip():
+        raise ExplanationNarrationError("narration provider must be a non-empty string")
+    provider_name = provider_name.strip()
+    if provider_name == DEFAULT_NARRATION_PROVIDER:
+        return FakeNarrationProvider()
+    raise ExplanationNarrationError(
+        f"Unsupported narration provider {provider_name}; only fake is configured"
+    )
+
+
+def narration_provider_metadata() -> dict[str, Any]:
+    provider = FakeNarrationProvider()
+    return {
+        "default_provider": DEFAULT_NARRATION_PROVIDER,
+        "available_providers": [
+            {
+                "name": provider.name,
+                "uses_external_llm": provider.uses_external_llm,
+            }
+        ],
+    }
 
 
 def build_explanation_prompt(explanation_payload: Mapping[str, Any]) -> str:

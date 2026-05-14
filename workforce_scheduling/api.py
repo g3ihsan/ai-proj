@@ -13,6 +13,8 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from .ai_explanations import (
     ExplanationNarrationError,
+    narration_provider_from_name,
+    narration_provider_metadata,
     narrate_explanation,
 )
 from .csv_adapter import (
@@ -207,9 +209,9 @@ async def metadata() -> dict[str, Any]:
         },
         "narration_endpoint": {
             "source": "Deterministic explanation payload",
-            "default_provider": "fake",
             "uses_external_llm_by_default": False,
             "response_shape": {"ok": True, "result": "Narration payload"},
+            **narration_provider_metadata(),
         },
         "job_execution": {
             "backend": "in_memory_thread_pool",
@@ -289,9 +291,12 @@ async def explain_narrate_endpoint(request: Request) -> JSONResponse:
     try:
         request_payload = await _json_request_payload(request)
         explanation_payload = _narration_explanation_from_payload(request_payload)
+        provider = narration_provider_from_name(
+            _narration_provider_name_from_payload(request_payload)
+        )
         response_payload = {
             "ok": True,
-            "result": narrate_explanation(explanation_payload),
+            "result": narrate_explanation(explanation_payload, provider),
         }
     except Exception as exc:
         response_payload = _error_payload_for_request(exc, request)
@@ -300,6 +305,8 @@ async def explain_narrate_endpoint(request: Request) -> JSONResponse:
     status_code = 200 if response_payload["ok"] else 400
     if _error_type(response_payload) == "RequestTooLargeError":
         status_code = 413
+    if _error_type(response_payload) == "ExplanationTargetNotFoundError":
+        status_code = 404
     if _error_type(response_payload) == "NarrationProviderError":
         status_code = 502
     _log_solve_route(request, "explain_narrate", response_payload, status_code)
@@ -600,6 +607,8 @@ def _target_from_payload(
 def _narration_explanation_from_payload(payload: Any) -> Any:
     if not isinstance(payload, dict):
         raise ExplanationNarrationError("Narration request must be an object")
+    if "solve_request" in payload:
+        return _narration_explanation_from_solve_request(payload)
     if "explanation" in payload:
         return payload["explanation"]
     if payload.get("ok") is True and isinstance(payload.get("result"), dict):
@@ -619,6 +628,51 @@ def _narration_explanation_from_payload(payload: Any) -> Any:
     raise ExplanationNarrationError(
         "Narration request must contain an explanation object"
     )
+
+
+def _narration_explanation_from_solve_request(payload: dict[str, Any]) -> Any:
+    kind = payload.get("kind")
+    if not isinstance(kind, str) or not kind.strip():
+        raise ExplanationNarrationError(
+            "Narration request with solve_request must include a non-empty kind"
+        )
+    kind = kind.strip()
+    explanation_specs = {
+        "summary": (explain_summary, ()),
+        "shortages": (explain_shortages, ()),
+        "assignment": (
+            explain_assignment,
+            ("employee_id", "day", "shift", "role"),
+        ),
+        "employee": (explain_employee, ("employee_id",)),
+        "shift": (explain_shift, ("day", "shift")),
+    }
+    if kind not in explanation_specs:
+        raise ExplanationNarrationError(
+            "Narration kind must be one of assignment, employee, shift, shortages, summary"
+        )
+
+    explainer, required_target_keys = explanation_specs[kind]
+    target = _target_from_payload(payload.get("target", {}), required_target_keys)
+    explanation_response = solve_request_to_explanation_payload(
+        payload["solve_request"],
+        explainer,
+        target=target,
+    )
+    if not explanation_response.get("ok", False):
+        error = explanation_response.get("error", {})
+        if isinstance(error, dict):
+            raise ExplanationNarrationError(
+                f"Could not build deterministic explanation: {error.get('message', '')}"
+            )
+        raise ExplanationNarrationError("Could not build deterministic explanation")
+    return explanation_response["result"]
+
+
+def _narration_provider_name_from_payload(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        return payload.get("provider")
+    return None
 
 
 def _frontend_response(filename: str, media_type: str) -> Response:

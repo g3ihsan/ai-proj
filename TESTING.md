@@ -143,12 +143,14 @@ non-assigned cases. `/explain/shift` accepts `day` and `shift`, with optional
 `ExplanationTargetNotFoundError`.
 
 `POST /explain/narrate` accepts an existing deterministic explanation payload
-and returns a manager-facing narration payload. The default provider is a fake
-deterministic provider for local use and tests, so no external LLM call is made.
-The narration layer must treat explanation payloads as read-only evidence: it
-may rewrite them, but it must not generate rosters, change assignments, invent
-shortages, or alter solver reasons. Invalid narration requests return
-`ExplanationNarrationError`.
+or `{"solve_request": ..., "kind": ..., "target": ...}` and returns a
+manager-facing narration payload. Supported narration kinds are `summary`,
+`shortages`, `assignment`, `employee`, and `shift`. The default and only
+configured provider is a fake deterministic provider for local use and tests, so
+no external LLM call is made. The narration layer must treat explanation
+payloads as read-only evidence: it may rewrite them, but it must not generate
+rosters, change assignments, invent shortages, or alter solver reasons. Invalid
+narration requests return `ExplanationNarrationError`.
 
 Run benchmark fixtures:
 

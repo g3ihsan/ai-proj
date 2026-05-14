@@ -98,7 +98,9 @@ behavior. LLMs must treat this evidence as read-only solver output; they must
 not invent assignments, shortages, feasibility status, objective values, or
 blocker reasons.
 The optional narration layer in `workforce_scheduling.ai_explanations` sits
-above deterministic explanation payloads. Its default API provider is fake and
+above deterministic explanation payloads. It can narrate an existing explanation
+or build one from `solve_request`, `kind`, and `target` using the deterministic
+explanation helpers. Its default and only configured API provider is fake and
 deterministic, so no external LLM call is made unless a future integration
 explicitly adds and configures one. Narration may rewrite explanation payloads
 into clearer language only; it must not generate schedules, change solver

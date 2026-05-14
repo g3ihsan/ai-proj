@@ -258,6 +258,12 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "default_provider": "fake",
             "uses_external_llm_by_default": False,
             "response_shape": {"ok": True, "result": "Narration payload"},
+            "available_providers": [
+                {
+                    "name": "fake",
+                    "uses_external_llm": False,
+                }
+            ],
         },
         "job_execution": {
             "backend": "in_memory_thread_pool",
@@ -626,6 +632,102 @@ def test_api_explain_narrate_accepts_explanation_envelope() -> None:
     assert response.status_code == 200
     assert result_payload["source_explanation_type"] == "employee_explanation"
     assert result_payload["provider"]["uses_external_llm"] is False
+
+
+def test_api_explain_narrate_accepts_solve_request_and_kind() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/narrate",
+        json_payload={
+            "solve_request": _small_solve_request(),
+            "kind": "summary",
+            "provider": "fake",
+        },
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["source_explanation_type"] == "summary_explanation"
+    assert result_payload["status"] == "OPTIMAL"
+    assert result_payload["provider"] == {
+        "name": "fake",
+        "uses_external_llm": False,
+    }
+    assert "The solver assigned 2 shifts with 0 total shortages." in (
+        result_payload["message"]
+    )
+
+
+def test_api_explain_narrate_accepts_solve_request_kind_and_target() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/narrate",
+        json_payload={
+            "solve_request": _small_solve_request(),
+            "kind": "assignment",
+            "target": {
+                "employee_id": 0,
+                "day": 0,
+                "shift": 0,
+                "role": "worker",
+            },
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["source_explanation_type"] == "assignment_explanation"
+    assert result_payload["reason_codes"] == [
+        "ASSIGNED_AVAILABLE",
+        "ASSIGNED_COST_CONTRIBUTION",
+        "ASSIGNED_COVERED_DEMAND",
+        "ASSIGNED_QUALIFIED",
+        "ASSIGNED_REST_COMPATIBLE",
+        "ASSIGNED_WITHIN_HOURS",
+    ]
+
+
+def test_api_explain_narrate_rejects_unknown_kind() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/narrate",
+        json_payload={
+            "solve_request": _small_solve_request(),
+            "kind": "unknown",
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ExplanationNarrationError"
+    assert response_payload["error"]["message"] == (
+        "Narration kind must be one of assignment, employee, shift, shortages, summary"
+    )
+
+
+def test_api_explain_narrate_rejects_unknown_provider() -> None:
+    explanation = _api_request(
+        "POST",
+        "/explain/summary",
+        json_payload=_small_solve_request(),
+    ).json()["result"]
+
+    response = _api_request(
+        "POST",
+        "/explain/narrate",
+        json_payload={"explanation": explanation, "provider": "external"},
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ExplanationNarrationError"
+    assert response_payload["error"]["message"] == (
+        "Unsupported narration provider external; only fake is configured"
+    )
 
 
 def test_api_explain_narrate_is_deterministic() -> None:

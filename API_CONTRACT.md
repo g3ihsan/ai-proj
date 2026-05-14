@@ -199,12 +199,14 @@ Invalid explanation targets return a normal error envelope with
 
 ### `POST /explain/narrate`
 
-The narration endpoint is an optional language layer over an existing
-deterministic explanation payload. It does not solve, does not change solver
-output, and does not create new evidence. The default provider is a deterministic
-fake provider, so local tests and default operation make no external LLM calls.
+The narration endpoint is an optional language layer over deterministic
+explanation payloads. It can narrate an existing explanation payload, or it can
+first build a deterministic explanation from `solve_request`, `kind`, and
+optional `target`. It does not change solver output and does not create new
+evidence. The default and only configured provider is the deterministic `fake`
+provider, so local tests and default operation make no external LLM calls.
 
-Request:
+Request using an existing explanation:
 
 ```json
 {
@@ -220,6 +222,39 @@ Request:
   }
 }
 ```
+
+Request using a solve request and explanation kind:
+
+```json
+{
+  "solve_request": {
+    "schema_version": 1,
+    "problem": {},
+    "options": {}
+  },
+  "kind": "assignment",
+  "target": {
+    "employee_id": 0,
+    "day": 0,
+    "shift": 0,
+    "role": "worker"
+  },
+  "provider": "fake"
+}
+```
+
+Supported `kind` values:
+
+- `summary`
+- `shortages`
+- `assignment`
+- `employee`
+- `shift`
+
+`assignment`, `employee`, and `shift` use the same target fields as the
+deterministic `/explain/*` endpoints. `provider` is optional and currently only
+supports `fake`. Unknown providers are rejected instead of falling back to an
+external service.
 
 Success:
 

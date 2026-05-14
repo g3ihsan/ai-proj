@@ -18,6 +18,8 @@ from workforce_scheduling.ai_explanations import (
     FakeNarrationProvider,
     build_explanation_prompt,
     narrate_explanation,
+    narration_provider_from_name,
+    narration_provider_metadata,
 )
 from workforce_scheduling.api import app
 from workforce_scheduling.benchmark import (
@@ -1405,6 +1407,28 @@ def test_ai_narration_fake_provider_returns_json_safe_grounded_payload() -> None
     }
     assert summary["message"] in narration["message"]
     assert "deterministic solver evidence" in narration["message"]
+
+
+def test_ai_narration_provider_boundary_exposes_only_fake_provider() -> None:
+    provider = narration_provider_from_name(None)
+    metadata = narration_provider_metadata()
+
+    assert isinstance(provider, FakeNarrationProvider)
+    assert provider.uses_external_llm is False
+    assert metadata == {
+        "default_provider": "fake",
+        "available_providers": [
+            {
+                "name": "fake",
+                "uses_external_llm": False,
+            }
+        ],
+    }
+    with pytest.raises(ExplanationNarrationError) as exc_info:
+        narration_provider_from_name("external")
+    assert str(exc_info.value) == (
+        "Unsupported narration provider external; only fake is configured"
+    )
 
 
 def test_ai_narration_rejects_invalid_explanation_payload() -> None:
