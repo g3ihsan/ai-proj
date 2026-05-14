@@ -112,10 +112,10 @@ source metadata with the mode, kind, and normalized target.
 The assistant router in `workforce_scheduling.assistant` is deterministic. It
 routes only supported manager explanation questions to the existing explanation
 and narration helpers. It does not use an LLM for intent detection, does not
-perform fuzzy employee-name matching, and returns an unsupported response rather
-than guessing missing assignment, employee, or shift targets. Explicit request
-targets override text-derived targets to keep caller-provided structured intent
-authoritative.
+perform fuzzy or substring employee-name matching, and returns an unsupported
+response rather than guessing missing assignment, employee, or shift targets.
+Explicit request targets override text-derived targets to keep caller-provided
+structured intent authoritative.
 The current evidence contract version is `1`. Public evidence uses stable
 uppercase reason codes. Internal lowercase blocker names are deliberately mapped
 to those public codes; unknown internal blocker names should fail tests instead

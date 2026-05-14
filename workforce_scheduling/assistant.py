@@ -131,11 +131,13 @@ def build_assistant_response(
 
     explanation = explanation_response["result"]
     narration = narrate_explanation(explanation, provider)
+    answer = narration["message"]
     return {
         "type": "assistant_response",
         "status": narration["status"],
         "question": question,
-        "message": narration["message"],
+        "message": answer,
+        "answer": answer,
         "intent": {
             "kind": intent.kind,
             "supported": True,
@@ -218,7 +220,6 @@ def _employee_id_from_exact_name(
     if not isinstance(employees, list):
         return None
 
-    question_lower = question.lower()
     matches: list[int] = []
     for employee in employees:
         if not isinstance(employee, Mapping):
@@ -227,7 +228,7 @@ def _employee_id_from_exact_name(
         employee_id = employee.get("employee_id")
         if not isinstance(name, str) or not name.strip():
             continue
-        if name.lower() in question_lower:
+        if _contains_exact_phrase(question, name):
             matches.append(_required_int(employee_id, "employee_id"))
     unique_matches = sorted(set(matches))
     if len(unique_matches) > 1:
@@ -330,6 +331,7 @@ def _unsupported_response(question: str, intent: AssistantIntent) -> dict[str, A
         "status": "unsupported",
         "question": question,
         "message": message,
+        "answer": message,
         "intent": {
             "kind": "unsupported",
             "supported": False,
@@ -342,6 +344,15 @@ def _unsupported_response(question: str, intent: AssistantIntent) -> dict[str, A
         "grounding": None,
         "reason_codes": [],
     }
+
+
+def _contains_exact_phrase(text: str, phrase: str) -> bool:
+    normalized_text = _normalize_question(text)
+    normalized_phrase = _normalize_question(phrase)
+    if not normalized_phrase:
+        return False
+    pattern = rf"(?<!\w){re.escape(normalized_phrase)}(?!\w)"
+    return re.search(pattern, normalized_text, flags=re.IGNORECASE) is not None
 
 
 def _raise_from_explanation_error_payload(payload: dict[str, Any]) -> None:

@@ -872,6 +872,7 @@ def test_api_assistant_ask_routes_summary_question() -> None:
     assert response.status_code == 200
     assert response_payload["ok"] is True
     assert result_payload["type"] == "assistant_response"
+    assert result_payload["answer"] == result_payload["message"]
     assert result_payload["intent"] == {
         "kind": "summary",
         "supported": True,
@@ -996,6 +997,7 @@ def test_api_assistant_ask_returns_unsupported_when_target_is_missing() -> None:
 
     assert response.status_code == 200
     assert result_payload["status"] == "unsupported"
+    assert result_payload["answer"] == result_payload["message"]
     assert result_payload["intent"] == {
         "kind": "unsupported",
         "supported": False,

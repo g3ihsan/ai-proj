@@ -1596,6 +1596,68 @@ def test_assistant_intent_router_rejects_ambiguous_employee_name() -> None:
     assert str(exc_info.value) == "employee name match is ambiguous"
 
 
+def test_assistant_intent_router_matches_exact_employee_name_phrase() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+    request_payload["problem"]["employees"][0]["name"] = "Asha"
+
+    intent = parse_assistant_intent(
+        "Why was Asha assigned to day 0 shift 0 as worker?",
+        solve_request=request_payload,
+    )
+
+    assert intent.kind == "assignment"
+    assert intent.target["employee_id"] == 0
+
+
+@pytest.mark.parametrize(
+    ("employee_name", "question"),
+    [
+        ("Ann", "Why was annual staffing assigned to day 0 shift 0 as worker?"),
+        ("John", "Why was Johnson assigned to day 0 shift 0 as worker?"),
+    ],
+)
+def test_assistant_intent_router_does_not_match_name_inside_unrelated_words(
+    employee_name: str,
+    question: str,
+) -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+    request_payload["problem"]["employees"][0]["name"] = employee_name
+
+    intent = parse_assistant_intent(
+        question,
+        solve_request=request_payload,
+    )
+
+    assert intent.kind == "unsupported"
+    assert intent.target == {"day": 0, "shift": 0, "role": "worker"}
+    assert intent.missing_fields == ("employee_id",)
+
+
+def test_assistant_intent_router_matches_multi_word_employee_name() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+    request_payload["problem"]["employees"][0]["name"] = "John Doe"
+
+    intent = parse_assistant_intent(
+        "Why was John Doe assigned to day 0 shift 0 as worker?",
+        solve_request=request_payload,
+    )
+
+    assert intent.kind == "assignment"
+    assert intent.target["employee_id"] == 0
+
+
 def test_assistant_response_uses_deterministic_explanation_and_narration() -> None:
     request_payload = solve_request_to_payload(
         _small_fully_feasible_problem(),
@@ -1612,6 +1674,7 @@ def test_assistant_response_uses_deterministic_explanation_and_narration() -> No
 
     assert response["type"] == "assistant_response"
     assert response["intent"]["kind"] == "summary"
+    assert response["answer"] == response["message"]
     assert response["explanation"]["type"] == "summary_explanation"
     assert response["narration"]["source_explanation_type"] == "summary_explanation"
     assert response["provider"]["uses_external_llm"] is False
