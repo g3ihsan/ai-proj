@@ -97,6 +97,12 @@ It does not add constraints, objectives, heuristics, or alternate scheduling
 behavior. LLMs must treat this evidence as read-only solver output; they must
 not invent assignments, shortages, feasibility status, objective values, or
 blocker reasons.
+The optional narration layer in `workforce_scheduling.ai_explanations` sits
+above deterministic explanation payloads. Its default API provider is fake and
+deterministic, so no external LLM call is made unless a future integration
+explicitly adds and configures one. Narration may rewrite explanation payloads
+into clearer language only; it must not generate schedules, change solver
+results, provide legal/HR advice, or infer facts absent from solver evidence.
 The current evidence contract version is `1`. Public evidence uses stable
 uppercase reason codes. Internal lowercase blocker names are deliberately mapped
 to those public codes; unknown internal blocker names should fail tests instead
@@ -110,12 +116,14 @@ preserves the same solved roster and objective values.
 
 `workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
 It exposes `GET /health`, `GET /metadata`, `POST /solve`, deterministic
-`POST /explain/*` endpoints, `POST /solve-csv`, `POST /solve-jobs`,
+`POST /explain/*` endpoints, `POST /explain/narrate`, `POST /solve-csv`, `POST /solve-jobs`,
 `GET /solve-jobs/{job_id}`, and the static `GET /viewer/` roster viewer. The
 explanation endpoints format existing Solver Evidence Layer fields into
 manager-readable JSON payloads. They are not LLM endpoints and do not generate
-or modify schedules. `GET /viewer` redirects to `/viewer/`, and read-only demo CSV
-files are available below `/viewer/examples/`. The synchronous solve
+or modify schedules. The narration endpoint formats an existing deterministic
+explanation payload using the default fake provider unless a future provider is
+explicitly injected. `GET /viewer` redirects to `/viewer/`, and read-only demo
+CSV files are available below `/viewer/examples/`. The synchronous solve
 endpoint preserves the existing success/error envelope. The CSV upload endpoint
 is a thin multipart wrapper around the same three-file CSV adapter and returns
 the standard roster CSV as `text/csv`. Every HTTP response includes

@@ -7,6 +7,7 @@ thin boundaries:
 - HTTP: `workforce_scheduling.api`
 - files: JSON request files and three-file CSV input/output
 - deterministic explanations: `workforce_scheduling.explanations`
+- optional narration: `workforce_scheduling.ai_explanations`
 
 The solver remains the source of truth. API, job, and CSV surfaces must not add
 solver objectives, constraints, persistence, or alternate scheduling behavior.
@@ -195,6 +196,57 @@ and any selected employee ids available from the solver evidence.
 Invalid explanation targets return a normal error envelope with
 `type=ExplanationQueryError`. Missing evidence for a valid target returns
 `type=ExplanationTargetNotFoundError`.
+
+### `POST /explain/narrate`
+
+The narration endpoint is an optional language layer over an existing
+deterministic explanation payload. It does not solve, does not change solver
+output, and does not create new evidence. The default provider is a deterministic
+fake provider, so local tests and default operation make no external LLM calls.
+
+Request:
+
+```json
+{
+  "explanation": {
+    "type": "summary_explanation",
+    "status": "OPTIMAL",
+    "title": "Roster explanation summary",
+    "message": "The solver assigned 2 shifts with 0 total shortages.",
+    "evidence_contract_version": 1,
+    "reason_codes": [],
+    "details": {},
+    "recommended_next_checks": []
+  }
+}
+```
+
+Success:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "type": "explanation_narration",
+    "source_explanation_type": "summary_explanation",
+    "status": "OPTIMAL",
+    "title": "Manager-facing explanation narration",
+    "message": "The solver assigned 2 shifts with 0 total shortages. Solver status: OPTIMAL.",
+    "evidence_contract_version": 1,
+    "reason_codes": [],
+    "provider": {
+      "name": "fake",
+      "uses_external_llm": false
+    },
+    "grounding": {}
+  }
+}
+```
+
+The narration prompt explicitly instructs any future provider to use only the
+provided evidence, avoid invented facts, avoid changing assignments or
+shortages, avoid legal/HR advice, and avoid claiming optimality unless
+`status=OPTIMAL`. Invalid narration payloads return `ExplanationNarrationError`.
 
 ### `POST /solve-csv`
 

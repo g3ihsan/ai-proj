@@ -201,6 +201,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "explain_assignment": "POST /explain/assignment",
             "explain_employee": "POST /explain/employee",
             "explain_shift": "POST /explain/shift",
+            "explain_narrate": "POST /explain/narrate",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -251,6 +252,12 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "source": "Solver Evidence Layer debug payload",
             "uses_llm": False,
             "response_shape": {"ok": True, "result": "Explanation payload"},
+        },
+        "narration_endpoint": {
+            "source": "Deterministic explanation payload",
+            "default_provider": "fake",
+            "uses_external_llm_by_default": False,
+            "response_shape": {"ok": True, "result": "Narration payload"},
         },
         "job_execution": {
             "backend": "in_memory_thread_pool",
@@ -566,6 +573,101 @@ def test_api_explanation_endpoints_do_not_change_debug_solve_output() -> None:
     assert _stable_solve_output(before["result"]) == _stable_solve_output(
         after["result"]
     )
+
+
+def test_api_explain_narrate_returns_fake_grounded_narration() -> None:
+    explanation_response = _api_request(
+        "POST",
+        "/explain/summary",
+        json_payload=_small_solve_request(),
+    ).json()
+    explanation = explanation_response["result"]
+
+    response = _api_request(
+        "POST",
+        "/explain/narrate",
+        json_payload={"explanation": explanation},
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["type"] == "explanation_narration"
+    assert result_payload["source_explanation_type"] == "summary_explanation"
+    assert result_payload["status"] == "OPTIMAL"
+    assert result_payload["evidence_contract_version"] == 1
+    assert result_payload["provider"] == {
+        "name": "fake",
+        "uses_external_llm": False,
+    }
+    assert explanation["message"] in result_payload["message"]
+    assert "deterministic solver evidence" in result_payload["message"]
+    json.dumps(response_payload, sort_keys=True)
+
+
+def test_api_explain_narrate_accepts_explanation_envelope() -> None:
+    explanation_response = _api_request(
+        "POST",
+        "/explain/employee",
+        json_payload=_explanation_request(
+            _small_solve_request(),
+            {"employee_id": 0},
+        ),
+    ).json()
+
+    response = _api_request(
+        "POST",
+        "/explain/narrate",
+        json_payload=explanation_response,
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["source_explanation_type"] == "employee_explanation"
+    assert result_payload["provider"]["uses_external_llm"] is False
+
+
+def test_api_explain_narrate_is_deterministic() -> None:
+    explanation = _api_request(
+        "POST",
+        "/explain/shift",
+        json_payload=_explanation_request(
+            _small_solve_request(),
+            {"day": 0, "shift": 0},
+        ),
+    ).json()["result"]
+    request_payload = {"explanation": explanation}
+
+    first = _api_request(
+        "POST",
+        "/explain/narrate",
+        json_payload=request_payload,
+    ).json()
+    second = _api_request(
+        "POST",
+        "/explain/narrate",
+        json_payload=request_payload,
+    ).json()
+
+    assert first == second
+
+
+def test_api_explain_narrate_rejects_invalid_payload() -> None:
+    response = _api_request(
+        "POST",
+        "/explain/narrate",
+        json_payload={"explanation": {"type": "summary_explanation"}},
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ExplanationNarrationError"
+    assert "explanation missing required field(s)" in response_payload["error"][
+        "message"
+    ]
+    assert response_payload["error"]["request_id"] == response.headers["x-request-id"]
 
 
 def test_api_explain_assignment_returns_404_for_missing_target() -> None:

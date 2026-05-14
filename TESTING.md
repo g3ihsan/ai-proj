@@ -103,6 +103,7 @@ HTTP endpoints:
 - `POST /explain/assignment`
 - `POST /explain/employee`
 - `POST /explain/shift`
+- `POST /explain/narrate`
 - `POST /solve-csv`
 - `POST /solve-jobs`
 - `GET /solve-jobs/{job_id}`
@@ -140,6 +141,14 @@ non-assigned cases. `/explain/shift` accepts `day` and `shift`, with optional
 `role` filtering for one demanded role. Invalid target shapes return
 `ExplanationQueryError`; valid targets with no matching evidence return
 `ExplanationTargetNotFoundError`.
+
+`POST /explain/narrate` accepts an existing deterministic explanation payload
+and returns a manager-facing narration payload. The default provider is a fake
+deterministic provider for local use and tests, so no external LLM call is made.
+The narration layer must treat explanation payloads as read-only evidence: it
+may rewrite them, but it must not generate rosters, change assignments, invent
+shortages, or alter solver reasons. Invalid narration requests return
+`ExplanationNarrationError`.
 
 Run benchmark fixtures:
 

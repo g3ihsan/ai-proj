@@ -13,6 +13,12 @@ import sys
 import httpx
 import pytest
 
+from workforce_scheduling.ai_explanations import (
+    ExplanationNarrationError,
+    FakeNarrationProvider,
+    build_explanation_prompt,
+    narrate_explanation,
+)
 from workforce_scheduling.api import app
 from workforce_scheduling.benchmark import (
     BenchmarkResult,
@@ -1362,6 +1368,50 @@ def test_explanation_helpers_return_json_safe_manager_payloads() -> None:
     assert employee["details"]["employee_id"] == 0
     assert shift["details"]["day"] == 0
     assert shortages["details"]["total_shortage"] == 0
+
+
+def test_ai_narration_prompt_is_grounded_in_explanation_payload() -> None:
+    result = solve(_small_fully_feasible_problem(), time_limit_sec=5.0, seed=1)
+    debug_payload = solve_result_to_payload(result, response_mode=RESPONSE_MODE_DEBUG)
+    summary = explain_summary(debug_payload)
+
+    prompt = build_explanation_prompt(summary)
+
+    assert "Use only the provided evidence." in prompt
+    assert "Do not invent facts." in prompt
+    assert "Do not change assignments, shortages, constraints, reason codes" in prompt
+    assert "Do not claim the schedule is optimal unless the payload status is OPTIMAL." in prompt
+    assert "Do not provide legal, HR, disciplinary, or compliance advice." in prompt
+    assert '"type":"summary_explanation"' in prompt
+    assert '"status":"OPTIMAL"' in prompt
+
+
+def test_ai_narration_fake_provider_returns_json_safe_grounded_payload() -> None:
+    result = solve(_small_fully_feasible_problem(), time_limit_sec=5.0, seed=1)
+    debug_payload = solve_result_to_payload(result, response_mode=RESPONSE_MODE_DEBUG)
+    summary = explain_summary(debug_payload)
+
+    narration = narrate_explanation(summary, FakeNarrationProvider())
+
+    _assert_json_object_keys_are_strings(narration)
+    json.loads(json.dumps(narration))
+    assert narration["type"] == "explanation_narration"
+    assert narration["source_explanation_type"] == "summary_explanation"
+    assert narration["status"] == "OPTIMAL"
+    assert narration["evidence_contract_version"] == 1
+    assert narration["provider"] == {
+        "name": "fake",
+        "uses_external_llm": False,
+    }
+    assert summary["message"] in narration["message"]
+    assert "deterministic solver evidence" in narration["message"]
+
+
+def test_ai_narration_rejects_invalid_explanation_payload() -> None:
+    with pytest.raises(ExplanationNarrationError) as exc_info:
+        narrate_explanation({"type": "summary_explanation"}, FakeNarrationProvider())
+
+    assert "explanation missing required field(s)" in str(exc_info.value)
 
 
 def test_explain_assignment_returns_non_assignment_explanation_when_not_assigned() -> None:

@@ -11,6 +11,10 @@ from uuid import uuid4
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
+from .ai_explanations import (
+    ExplanationNarrationError,
+    narrate_explanation,
+)
 from .csv_adapter import (
     DEFAULT_MAX_CONSECUTIVE_DAYS,
     DEFAULT_MIN_REST_HOURS,
@@ -149,6 +153,7 @@ async def metadata() -> dict[str, Any]:
             "explain_assignment": "POST /explain/assignment",
             "explain_employee": "POST /explain/employee",
             "explain_shift": "POST /explain/shift",
+            "explain_narrate": "POST /explain/narrate",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -199,6 +204,12 @@ async def metadata() -> dict[str, Any]:
             "source": "Solver Evidence Layer debug payload",
             "uses_llm": False,
             "response_shape": {"ok": True, "result": "Explanation payload"},
+        },
+        "narration_endpoint": {
+            "source": "Deterministic explanation payload",
+            "default_provider": "fake",
+            "uses_external_llm_by_default": False,
+            "response_shape": {"ok": True, "result": "Narration payload"},
         },
         "job_execution": {
             "backend": "in_memory_thread_pool",
@@ -271,6 +282,28 @@ async def explain_shift_endpoint(request: Request) -> JSONResponse:
         explain_shift,
         required_target_keys=("day", "shift"),
     )
+
+
+@app.post("/explain/narrate")
+async def explain_narrate_endpoint(request: Request) -> JSONResponse:
+    try:
+        request_payload = await _json_request_payload(request)
+        explanation_payload = _narration_explanation_from_payload(request_payload)
+        response_payload = {
+            "ok": True,
+            "result": narrate_explanation(explanation_payload),
+        }
+    except Exception as exc:
+        response_payload = _error_payload_for_request(exc, request)
+
+    response_payload = _with_request_id(response_payload, request)
+    status_code = 200 if response_payload["ok"] else 400
+    if _error_type(response_payload) == "RequestTooLargeError":
+        status_code = 413
+    if _error_type(response_payload) == "NarrationProviderError":
+        status_code = 502
+    _log_solve_route(request, "explain_narrate", response_payload, status_code)
+    return JSONResponse(content=response_payload, status_code=status_code)
 
 
 @app.post("/solve-csv", response_model=None)
@@ -562,6 +595,30 @@ def _target_from_payload(
             )
         target["role"] = target["role"].strip()
     return target
+
+
+def _narration_explanation_from_payload(payload: Any) -> Any:
+    if not isinstance(payload, dict):
+        raise ExplanationNarrationError("Narration request must be an object")
+    if "explanation" in payload:
+        return payload["explanation"]
+    if payload.get("ok") is True and isinstance(payload.get("result"), dict):
+        return payload["result"]
+    required_explanation_keys = {
+        "type",
+        "status",
+        "title",
+        "message",
+        "evidence_contract_version",
+        "reason_codes",
+        "details",
+        "recommended_next_checks",
+    }
+    if required_explanation_keys <= set(payload):
+        return payload
+    raise ExplanationNarrationError(
+        "Narration request must contain an explanation object"
+    )
 
 
 def _frontend_response(filename: str, media_type: str) -> Response:
