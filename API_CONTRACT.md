@@ -354,6 +354,10 @@ use `answer` without breaking older clients that read `message`.
 
 ### `POST /recommendations`
 
+Alias:
+
+- `POST /recommend/what-if`
+
 The recommendation endpoint evaluates small deterministic what-if scenarios
 against a baseline solve request. Version 1 supports only:
 

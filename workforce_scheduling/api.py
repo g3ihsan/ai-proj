@@ -166,6 +166,7 @@ async def metadata() -> dict[str, Any]:
             "explain_narrate": "POST /explain/narrate",
             "assistant_ask": "POST /assistant/ask",
             "recommendations": "POST /recommendations",
+            "recommend_what_if": "POST /recommend/what-if",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -375,6 +376,18 @@ async def assistant_ask_endpoint(request: Request) -> JSONResponse:
 
 @app.post("/recommendations")
 async def recommendations_endpoint(request: Request) -> JSONResponse:
+    return await _recommendations_endpoint(request, "recommendations")
+
+
+@app.post("/recommend/what-if")
+async def recommend_what_if_endpoint(request: Request) -> JSONResponse:
+    return await _recommendations_endpoint(request, "recommend_what_if")
+
+
+async def _recommendations_endpoint(
+    request: Request,
+    route_name: str,
+) -> JSONResponse:
     try:
         request_payload = await _json_request_payload(request)
         response_payload = {
@@ -388,7 +401,7 @@ async def recommendations_endpoint(request: Request) -> JSONResponse:
     status_code = 200 if response_payload["ok"] else 400
     if _error_type(response_payload) == "RequestTooLargeError":
         status_code = 413
-    _log_solve_route(request, "recommendations", response_payload, status_code)
+    _log_solve_route(request, route_name, response_payload, status_code)
     return JSONResponse(content=response_payload, status_code=status_code)
 
 

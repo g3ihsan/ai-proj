@@ -231,6 +231,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "explain_narrate": "POST /explain/narrate",
             "assistant_ask": "POST /assistant/ask",
             "recommendations": "POST /recommendations",
+            "recommend_what_if": "POST /recommend/what-if",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -1247,6 +1248,26 @@ def test_api_recommendations_returns_grounded_shortage_reduction() -> None:
     ]
     assert result_payload["metadata"]["uses_external_llm"] is False
     json.dumps(response_payload, sort_keys=True)
+
+
+def test_api_recommend_what_if_alias_matches_recommendations() -> None:
+    request_payload = {
+        "goal": "reduce_shortages",
+        "solve_request": _shortage_reduction_solve_request(),
+    }
+
+    recommendations = _api_request(
+        "POST",
+        "/recommendations",
+        json_payload=request_payload,
+    ).json()
+    what_if = _api_request(
+        "POST",
+        "/recommend/what-if",
+        json_payload=request_payload,
+    ).json()
+
+    assert what_if == recommendations
 
 
 def test_api_recommendations_rejects_invalid_request() -> None:
