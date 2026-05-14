@@ -19,9 +19,11 @@ RECOMMENDATION_CONTRACT_VERSION = 1
 RECOMMENDATION_TYPE_WHAT_IF = "what_if"
 SCENARIO_TYPE_SET_AVAILABILITY = "set_availability"
 SCENARIO_TYPE_INCREASE_EMPLOYEE_MAX_HOURS = "increase_employee_max_hours"
+SCENARIO_TYPE_ADD_TEMPORARY_EMPLOYEE = "add_temporary_employee"
 SUPPORTED_SCENARIO_TYPES = (
     SCENARIO_TYPE_SET_AVAILABILITY,
     SCENARIO_TYPE_INCREASE_EMPLOYEE_MAX_HOURS,
+    SCENARIO_TYPE_ADD_TEMPORARY_EMPLOYEE,
 )
 DISCARDED_MAX_SCENARIO_LIMIT = "MAX_SCENARIO_LIMIT"
 DISCARDED_MAX_RECOMMENDATION_LIMIT = "MAX_RECOMMENDATION_LIMIT"
@@ -100,9 +102,11 @@ def _shortage_reduction_scenario_candidates(
         if isinstance(employee, Mapping) and "employee_id" in employee
     }
     assigned_hours_by_employee = _assigned_hours_by_employee(baseline_result_payload)
+    next_temporary_employee_id = _next_employee_id(employees)
     scenarios: list[dict[str, Any]] = []
     seen_availability_changes: set[tuple[int, int, int, str]] = set()
     seen_max_hours_changes: set[tuple[int, int, int, str]] = set()
+    seen_temporary_changes: set[tuple[int, int, str]] = set()
 
     diagnostics = _list_field(baseline_result_payload, "demanded_slot_diagnostics")
     for diagnostic in sorted(
@@ -112,6 +116,7 @@ def _shortage_reduction_scenario_candidates(
         if int(diagnostic.get("shortage_count", 0)) <= 0:
             continue
         blocked = _mapping_field(diagnostic, "blocked_employee_ids_by_reason")
+        slot_existing_scenario_count = 0
         for employee_id in sorted(
             int(value) for value in blocked.get("unavailable", [])
         ):
@@ -159,6 +164,7 @@ def _shortage_reduction_scenario_candidates(
                     ],
                 }
             )
+            slot_existing_scenario_count += 1
         for employee_id in sorted(
             int(value) for value in blocked.get("exceeds_weekly_hours", [])
         ):
@@ -212,6 +218,52 @@ def _shortage_reduction_scenario_candidates(
                             "from": current_max_hours,
                             "to": new_max_hours,
                             "increase_by": new_max_hours - current_max_hours,
+                        }
+                    ],
+                }
+            )
+            slot_existing_scenario_count += 1
+        if slot_existing_scenario_count == 0:
+            day = int(diagnostic["day"])
+            shift = int(diagnostic["shift"])
+            role = str(diagnostic["role"])
+            change_key = (day, shift, role)
+            if change_key in seen_temporary_changes:
+                continue
+            seen_temporary_changes.add(change_key)
+            duration = shift_duration_hours(
+                _list_field(problem, "shift_start_hours"),
+                _list_field(problem, "shift_end_hours"),
+                shift,
+            )
+            hourly_cost = _temporary_hourly_cost(employees, role)
+            temp_employee_id = next_temporary_employee_id
+            scenario_id = (
+                f"add_temporary_employee_{temp_employee_id}_day_{day}_"
+                f"shift_{shift}_role_{role}"
+            )
+            scenarios.append(
+                {
+                    "scenario_id": scenario_id,
+                    "goal": RECOMMENDATION_GOAL_REDUCE_SHORTAGES,
+                    "title": (
+                        f"Add temporary employee {temp_employee_id} for day {day} "
+                        f"shift {shift} as {role}"
+                    ),
+                    "description": (
+                        "Scenario adds one synthetic temporary employee for this "
+                        "shortage slot and re-solves with the existing CP-SAT model."
+                    ),
+                    "changes": [
+                        {
+                            "type": SCENARIO_TYPE_ADD_TEMPORARY_EMPLOYEE,
+                            "employee_id": temp_employee_id,
+                            "name": f"Temporary {role} day {day} shift {shift}",
+                            "role": role,
+                            "day": day,
+                            "shift": shift,
+                            "hourly_cost": hourly_cost,
+                            "max_weekly_hours": duration,
                         }
                     ],
                 }
@@ -492,6 +544,9 @@ def _apply_change(
     if change_type == SCENARIO_TYPE_INCREASE_EMPLOYEE_MAX_HOURS:
         _apply_increase_employee_max_hours_change(solve_request_payload, change)
         return
+    if change_type == SCENARIO_TYPE_ADD_TEMPORARY_EMPLOYEE:
+        _apply_add_temporary_employee_change(solve_request_payload, change)
+        return
     raise ScenarioValidationError(f"Unsupported scenario change {change_type}")
 
 
@@ -546,6 +601,63 @@ def _apply_increase_employee_max_hours_change(
         employee["max_weekly_hours"] = new_max_hours
         return
     raise ScenarioValidationError(f"Unknown employee {employee_id}")
+
+
+def _apply_add_temporary_employee_change(
+    solve_request_payload: dict[str, Any],
+    change: Mapping[str, Any],
+) -> None:
+    employee_id = _required_int_change_field(change, "employee_id")
+    name = _required_str_change_field(change, "name")
+    role = _required_str_change_field(change, "role")
+    day = _required_int_change_field(change, "day")
+    shift = _required_int_change_field(change, "shift")
+    hourly_cost = _required_int_change_field(change, "hourly_cost")
+    max_weekly_hours = _required_int_change_field(change, "max_weekly_hours")
+    if hourly_cost < 0:
+        raise ScenarioValidationError(
+            "temporary employee hourly_cost must be non-negative"
+        )
+    if max_weekly_hours <= 0:
+        raise ScenarioValidationError(
+            "temporary employee max_weekly_hours must be positive"
+        )
+
+    problem = _mapping_field(solve_request_payload, "problem")
+    employees = _list_field(problem, "employees")
+    if any(
+        _required_int_change_field(employee, "employee_id") == employee_id
+        for employee in employees
+    ):
+        raise ScenarioValidationError(f"Employee {employee_id} already exists")
+    roles = _list_field(problem, "roles")
+    if role not in {str(value) for value in roles}:
+        raise ScenarioValidationError(f"Unknown temporary employee role {role}")
+    days = _list_field(problem, "days")
+    shifts = _list_field(problem, "shifts")
+    if day not in {int(value) for value in days}:
+        raise ScenarioValidationError(f"Unknown temporary employee day {day}")
+    if not 0 <= shift < len(shifts):
+        raise ScenarioValidationError(f"Unknown temporary employee shift {shift}")
+
+    availability = [
+        [False for _shift in range(len(shifts))] for _day in range(len(days))
+    ]
+    if not _availability_in_bounds(availability, day, shift):
+        raise ScenarioValidationError(
+            f"Temporary employee availability index outside matrix for employee {employee_id}"
+        )
+    availability[day][shift] = True
+    employees.append(
+        {
+            "employee_id": employee_id,
+            "name": name,
+            "roles": [role],
+            "hourly_cost": hourly_cost,
+            "max_weekly_hours": max_weekly_hours,
+            "availability": availability,
+        }
+    )
 
 
 def _required_int_change_field(
@@ -619,6 +731,35 @@ def _has_non_hours_blocker(
         if employee_id in {int(value) for value in employee_ids}:
             return True
     return False
+
+
+def _next_employee_id(employees: list[Any]) -> int:
+    employee_ids = [
+        int(employee["employee_id"])
+        for employee in employees
+        if isinstance(employee, Mapping) and "employee_id" in employee
+    ]
+    return (max(employee_ids) + 1) if employee_ids else 0
+
+
+def _temporary_hourly_cost(employees: list[Any], role: str) -> int:
+    role_costs = [
+        int(employee["hourly_cost"])
+        for employee in employees
+        if isinstance(employee, Mapping)
+        and role in employee.get("roles", [])
+        and "hourly_cost" in employee
+    ]
+    all_costs = [
+        int(employee["hourly_cost"])
+        for employee in employees
+        if isinstance(employee, Mapping) and "hourly_cost" in employee
+    ]
+    if role_costs:
+        return max(role_costs)
+    if all_costs:
+        return max(all_costs)
+    return 0
 
 
 def _availability_is_false(availability: list[Any], day: int, shift: int) -> bool:

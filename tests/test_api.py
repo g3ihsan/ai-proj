@@ -253,6 +253,27 @@ def _max_hours_recommendation_solve_request() -> Dict[str, object]:
     return request_payload
 
 
+def _temporary_employee_recommendation_solve_request() -> Dict[str, object]:
+    request_payload = _small_solve_request()
+    request_payload["problem"]["roles"] = ["worker", "supervisor"]
+    request_payload["problem"]["employees"] = [
+        {
+            "employee_id": 0,
+            "name": "E0",
+            "roles": ["supervisor"],
+            "hourly_cost": 20,
+            "max_weekly_hours": 40,
+            "availability": [[True]],
+        }
+    ]
+    request_payload["problem"]["days"] = [0]
+    request_payload["problem"]["demand"] = [
+        {"day": 0, "shift": 0, "role": "worker", "required": 1},
+        {"day": 0, "shift": 0, "role": "supervisor", "required": 0},
+    ]
+    return request_payload
+
+
 def _explanation_request(
     request_payload: Dict[str, object],
     target: Dict[str, object],
@@ -390,6 +411,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "supported_scenario_types": [
                 "set_availability",
                 "increase_employee_max_hours",
+                "add_temporary_employee",
             ],
             "max_scenarios": 5,
             "max_recommendations": 5,
@@ -1087,6 +1109,7 @@ def test_api_assistant_ask_routes_recommendation_question() -> None:
         "supported_scenario_types": [
             "set_availability",
             "increase_employee_max_hours",
+            "add_temporary_employee",
         ],
         "uses_external_llm": False,
         "changes_solver_behavior": False,
@@ -1541,6 +1564,7 @@ def test_api_recommendations_returns_grounded_shortage_reduction() -> None:
     assert result_payload["metadata"]["supported_scenario_types"] == [
         "set_availability",
         "increase_employee_max_hours",
+        "add_temporary_employee",
     ]
     json.dumps(response_payload, sort_keys=True)
 
@@ -1572,6 +1596,40 @@ def test_api_recommendations_returns_grounded_max_hours_reduction() -> None:
             "from": 8,
             "to": 16,
             "increase_by": 8,
+        }
+    ]
+    assert result_payload["recommendations"][0]["comparison"][
+        "shortage_reduction"
+    ] == 1
+
+
+def test_api_recommendations_returns_grounded_temporary_employee_reduction() -> None:
+    response = _api_request(
+        "POST",
+        "/recommendations",
+        json_payload={
+            "goal": "reduce_shortages",
+            "solve_request": _temporary_employee_recommendation_solve_request(),
+        },
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["baseline"]["total_shortage"] == 1
+    assert result_payload["summary"]["generated_scenario_count"] == 1
+    assert result_payload["summary"]["recommendation_count"] == 1
+    assert result_payload["recommendations"][0]["changes"] == [
+        {
+            "type": "add_temporary_employee",
+            "employee_id": 1,
+            "name": "Temporary worker day 0 shift 0",
+            "role": "worker",
+            "day": 0,
+            "shift": 0,
+            "hourly_cost": 20,
+            "max_weekly_hours": 8,
         }
     ]
     assert result_payload["recommendations"][0]["comparison"][

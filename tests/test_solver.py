@@ -1763,6 +1763,7 @@ def test_assistant_response_routes_shortage_recommendations_to_engine() -> None:
         "supported_scenario_types": [
             "set_availability",
             "increase_employee_max_hours",
+            "add_temporary_employee",
         ],
         "uses_external_llm": False,
         "changes_solver_behavior": False,
@@ -1871,6 +1872,55 @@ def test_recommendations_generate_max_hours_scenario_from_shortage_evidence() ->
     ]
 
 
+def test_recommendations_generate_temporary_employee_scenario_when_existing_staff_cannot_resolve() -> None:
+    roles = ["worker", "supervisor"]
+    demand = _build_demand(1, 1, roles)
+    demand[0][0]["worker"] = 1
+    data = _make_problem(
+        employees=[
+            _make_employee(0, ["supervisor"], [[True]], hourly_cost=20),
+        ],
+        roles=roles,
+        shift_start_hours=[8],
+        shift_end_hours=[16],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+    request_payload = solve_request_to_payload(data, time_limit_sec=5.0, seed=1)
+    baseline_response = solve_payload(json.loads(json.dumps(request_payload)))
+    baseline_result = baseline_response["result"]
+
+    scenarios = generate_shortage_reduction_scenarios(
+        request_payload,
+        baseline_result,
+    )
+
+    assert scenarios == [
+        {
+            "scenario_id": "add_temporary_employee_1_day_0_shift_0_role_worker",
+            "goal": "reduce_shortages",
+            "title": "Add temporary employee 1 for day 0 shift 0 as worker",
+            "description": (
+                "Scenario adds one synthetic temporary employee for this "
+                "shortage slot and re-solves with the existing CP-SAT model."
+            ),
+            "changes": [
+                {
+                    "type": "add_temporary_employee",
+                    "employee_id": 1,
+                    "name": "Temporary worker day 0 shift 0",
+                    "role": "worker",
+                    "day": 0,
+                    "shift": 0,
+                    "hourly_cost": 20,
+                    "max_weekly_hours": 8,
+                }
+            ],
+        }
+    ]
+
+
 def test_recommendations_reduce_shortages_with_grounded_scenario_solve() -> None:
     request_payload = solve_request_to_payload(
         _evidence_blocker_problem(),
@@ -1919,6 +1969,7 @@ def test_recommendations_reduce_shortages_with_grounded_scenario_solve() -> None
     assert response["metadata"]["supported_scenario_types"] == [
         "set_availability",
         "increase_employee_max_hours",
+        "add_temporary_employee",
     ]
     assert response["metadata"]["max_recommendations"] == 5
     json.dumps(response, sort_keys=True)
@@ -1963,6 +2014,45 @@ def test_recommendations_reduce_shortages_with_max_hours_scenario_solve() -> Non
             "from": 8,
             "to": 16,
             "increase_by": 8,
+        }
+    ]
+    assert response["recommendations"][0]["comparison"]["shortage_reduction"] == 1
+    assert response["evaluated_scenarios"][0]["snapshot"]["total_shortage"] == 0
+
+
+def test_recommendations_reduce_shortages_with_temporary_employee_scenario_solve() -> None:
+    roles = ["worker", "supervisor"]
+    demand = _build_demand(1, 1, roles)
+    demand[0][0]["worker"] = 1
+    data = _make_problem(
+        employees=[
+            _make_employee(0, ["supervisor"], [[True]], hourly_cost=20),
+        ],
+        roles=roles,
+        shift_start_hours=[8],
+        shift_end_hours=[16],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+    request_payload = solve_request_to_payload(data, time_limit_sec=5.0, seed=1)
+
+    response = recommend_scenarios(request_payload)
+
+    assert response["baseline"]["total_shortage"] == 1
+    assert response["summary"]["generated_scenario_count"] == 1
+    assert response["summary"]["recommendation_count"] == 1
+    assert response["summary"]["best_shortage_reduction"] == 1
+    assert response["recommendations"][0]["changes"] == [
+        {
+            "type": "add_temporary_employee",
+            "employee_id": 1,
+            "name": "Temporary worker day 0 shift 0",
+            "role": "worker",
+            "day": 0,
+            "shift": 0,
+            "hourly_cost": 20,
+            "max_weekly_hours": 8,
         }
     ]
     assert response["recommendations"][0]["comparison"]["shortage_reduction"] == 1
@@ -2237,6 +2327,43 @@ def test_recommendations_max_hours_scenario_does_not_mutate_request_payload() ->
     assert request_payload == original_payload
 
 
+def test_recommendations_temporary_employee_scenario_does_not_mutate_request_payload() -> None:
+    roles = ["worker", "supervisor"]
+    demand = _build_demand(1, 1, roles)
+    demand[0][0]["worker"] = 1
+    data = _make_problem(
+        employees=[
+            _make_employee(0, ["supervisor"], [[True]], hourly_cost=20),
+        ],
+        roles=roles,
+        shift_start_hours=[8],
+        shift_end_hours=[16],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+    request_payload = solve_request_to_payload(
+        data,
+        time_limit_sec=5.0,
+        seed=1,
+        response_mode=RESPONSE_MODE_COMPACT,
+    )
+    original_payload = json.loads(json.dumps(request_payload))
+
+    response = recommendation_response_from_request(
+        {
+            "goal": "reduce_shortages",
+            "solve_request": request_payload,
+        }
+    )
+
+    assert response["summary"]["recommendation_count"] == 1
+    assert response["recommendations"][0]["changes"][0]["type"] == (
+        "add_temporary_employee"
+    )
+    assert request_payload == original_payload
+
+
 def test_recommendations_reject_unknown_scenario_change_type() -> None:
     request_payload = solve_request_to_payload(
         _small_fully_feasible_problem(),
@@ -2481,6 +2608,102 @@ def test_recommendations_reject_invalid_employee_max_hours_state(
                         "to": 48,
                     }
                 ],
+            },
+        )
+
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.parametrize(
+    ("change_patch", "message"),
+    [
+        ({"employee_id": True}, "scenario change field employee_id must be an integer"),
+        ({"name": ""}, "scenario change field name must be a non-empty string"),
+        ({"role": ""}, "scenario change field role must be a non-empty string"),
+        ({"day": True}, "scenario change field day must be an integer"),
+        ({"shift": "0"}, "scenario change field shift must be an integer"),
+        ({"hourly_cost": -1}, "temporary employee hourly_cost must be non-negative"),
+        (
+            {"max_weekly_hours": 0},
+            "temporary employee max_weekly_hours must be positive",
+        ),
+    ],
+)
+def test_recommendations_reject_invalid_temporary_employee_change_fields(
+    change_patch: Dict[str, object],
+    message: str,
+) -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+    change = {
+        "type": "add_temporary_employee",
+        "employee_id": 99,
+        "name": "Temporary worker day 0 shift 0",
+        "role": "worker",
+        "day": 0,
+        "shift": 0,
+        "hourly_cost": 20,
+        "max_weekly_hours": 8,
+        **change_patch,
+    }
+
+    with pytest.raises(ScenarioValidationError) as exc_info:
+        evaluate_scenario(
+            request_payload,
+            {
+                "scenario_id": "bad_temporary_employee_scenario",
+                "goal": "reduce_shortages",
+                "title": "Bad temporary employee scenario",
+                "description": "Invalid temporary employee change.",
+                "changes": [change],
+            },
+        )
+
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.parametrize(
+    ("change_patch", "message"),
+    [
+        ({"employee_id": 0}, "Employee 0 already exists"),
+        ({"role": "unknown"}, "Unknown temporary employee role unknown"),
+        ({"day": 9}, "Unknown temporary employee day 9"),
+        ({"shift": 9}, "Unknown temporary employee shift 9"),
+    ],
+)
+def test_recommendations_reject_invalid_temporary_employee_target(
+    change_patch: Dict[str, object],
+    message: str,
+) -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+    change = {
+        "type": "add_temporary_employee",
+        "employee_id": 99,
+        "name": "Temporary worker day 0 shift 0",
+        "role": "worker",
+        "day": 0,
+        "shift": 0,
+        "hourly_cost": 20,
+        "max_weekly_hours": 8,
+        **change_patch,
+    }
+
+    with pytest.raises(ScenarioValidationError) as exc_info:
+        evaluate_scenario(
+            request_payload,
+            {
+                "scenario_id": "bad_temporary_employee_scenario",
+                "goal": "reduce_shortages",
+                "title": "Bad temporary employee scenario",
+                "description": "Invalid temporary employee target.",
+                "changes": [change],
             },
         )
 

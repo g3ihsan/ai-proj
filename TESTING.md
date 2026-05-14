@@ -184,10 +184,12 @@ questions return `ok=true` with `status=unsupported` and no narration.
 deterministic what-if scenarios through the same CP-SAT solver. The current
 supported goal is `reduce_shortages`, the response contract version is `1`, and
 the response includes `recommendation_type=what_if`. Supported scenario types
-are `set_availability` and `increase_employee_max_hours`. Scenario generation
-is intentionally narrow and capped: it tries availability changes for qualified
-unavailable employees on shortage slots, and minimal max-weekly-hours increases
-when an otherwise useful employee is blocked by `exceeds_weekly_hours`. It
+are `set_availability`, `increase_employee_max_hours`, and
+`add_temporary_employee`. Scenario generation is intentionally narrow and
+capped: it tries availability changes for qualified unavailable employees on
+shortage slots, minimal max-weekly-hours increases when an otherwise useful
+employee is blocked by `exceeds_weekly_hours`, and one synthetic temporary
+employee for a shortage slot when no existing-employee scenario is available. It
 re-solves each scenario, reports grounded shortage/objective comparisons, and
 reports unsolved over-limit candidates in `discarded_scenarios`. Returned
 recommendations are also capped through `limits.max_recommendations`; positive

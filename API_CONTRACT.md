@@ -402,15 +402,18 @@ Supported scenario types:
 
 - `set_availability`
 - `increase_employee_max_hours`
+- `add_temporary_employee`
 
 The first scenario generator is intentionally narrow: for shortage slots, it
 tries small deterministic changes and re-solves each candidate with the existing
 CP-SAT model. Version 1 scenarios can make a qualified but unavailable employee
 available for one day/shift, or minimally increase a qualified and available
 employee's `max_weekly_hours` when shortage evidence shows
-`exceeds_weekly_hours` is the local blocker. It reports only grounded
-comparisons. It does not change solver objectives, constraints, fairness
-behavior, warm-start behavior, or normal `/solve` requests.
+`exceeds_weekly_hours` is the local blocker. If neither existing-employee
+scenario exists for a shortage slot, it can add one synthetic temporary employee
+for that slot using the canonical employee schema with `hourly_cost`. It reports
+only grounded comparisons. It does not change solver objectives, constraints,
+fairness behavior, warm-start behavior, or normal `/solve` requests.
 
 Request:
 
@@ -472,7 +475,8 @@ Success:
       "recommendation_contract_version": 1,
       "supported_scenario_types": [
         "set_availability",
-        "increase_employee_max_hours"
+        "increase_employee_max_hours",
+        "add_temporary_employee"
       ],
       "uses_external_llm": false,
       "changes_solver_behavior": false
