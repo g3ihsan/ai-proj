@@ -52,6 +52,10 @@ requests or solver input errors.
 JSON remains the canonical internal service contract. The three-file CSV
 boundary is a file adapter only: it converts `employees.csv`, `shifts.csv`, and
 `demand.csv` into `ProblemData`, runs the same solver, and writes one roster CSV.
+The deterministic CSV mapper is a pre-validation reporting layer only. It can
+suggest mappings from messy headers to canonical employee, shift, and demand
+fields, but it does not parse rows, infer staffing demand, mutate files, call an
+external LLM/API, or bypass `csv_adapter.py` validation.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.

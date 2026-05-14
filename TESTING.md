@@ -56,6 +56,13 @@ CSV contract:
 - `shifts.csv`: `shift,shift_name,start_hour,end_hour`
 - `demand.csv`: `day,shift,role,required`
 
+`workforce_scheduling.csv_mapper` is a deterministic pre-validation helper for
+messy CSV headers. It suggests employee, shift, and demand column mappings,
+reports confidence, missing fields, unmapped headers, warnings, and
+`uses_external_llm=false`. It does not replace `csv_adapter.py`; tests assert it
+only produces mapping reports and validation errors before canonical CSV
+parsing.
+
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:
 `0`, `1`, `2`, and so on. Global solver settings are not read from

@@ -866,6 +866,16 @@ Example debug response snippet:
 
 CSV input uses exactly three files.
 
+The optional deterministic CSV schema mapper in
+`workforce_scheduling.csv_mapper` can inspect messy headers before validation
+and suggest mappings to the canonical CSV fields. It does not parse rows, solve
+schedules, mutate CSV files, call an external LLM/API, or replace the strict CSV
+adapter. Mapper reports include `uses_external_llm=false`, suggested source
+headers, normalized headers, confidence scores, missing fields, unmapped
+headers, warnings, and validation status. Incomplete reports are advisory and
+must be reviewed before files are renamed or transformed into the canonical CSV
+contract below.
+
 ### `employees.csv`
 
 Header pattern:
@@ -882,6 +892,11 @@ Rules:
 - `max_weekly_hours`: integer
 - availability columns must exist for every day/shift combination
 - availability values may be `true`/`false`, `yes`/`no`, or `1`/`0`
+
+Common employee header variants recognized by the mapper include `Staff ID`,
+`Employee Name`, `Skills`, `Hourly Rate`, `Pay Rate`, `Weekly Hours Limit`,
+`Max Hours`, compact `Availability`, and explicit `Available Day0 Shift0`
+style availability columns.
 
 ### `shifts.csv`
 
@@ -901,6 +916,9 @@ Rules:
 
 Global solver settings are not read from `shifts.csv`.
 
+Common shift header variants recognized by the mapper include `Shift ID`,
+`Shift Label`, `Start Time`, and `End Time`.
+
 ### `demand.csv`
 
 Required header:
@@ -915,6 +933,9 @@ Rules:
 - `shift`: shift ID or shift name
 - `role`: role name
 - `required`: non-negative integer demand
+
+Common demand header variants recognized by the mapper include `Day Index`,
+`Shift Name`, `Required Role`, `Demand`, and `Headcount`.
 
 Checked-in CSV examples:
 
