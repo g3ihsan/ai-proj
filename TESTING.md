@@ -183,15 +183,17 @@ questions return `ok=true` with `status=unsupported` and no narration.
 `POST /recommendations` and its `POST /recommend/what-if` alias evaluate
 deterministic what-if scenarios through the same CP-SAT solver. The current
 supported goal is `reduce_shortages`, the response contract version is `1`, and
-the response includes `recommendation_type=what_if`. The only supported
-scenario type is `set_availability`. Scenario generation is intentionally
-narrow and capped: it tries availability changes for qualified unavailable
-employees on shortage slots, re-solves each scenario, reports grounded
-shortage/objective comparisons, and reports unsolved over-limit candidates in
-`discarded_scenarios`. Returned recommendations are also capped through
-`limits.max_recommendations`; positive over-limit results are reported in
-`discarded_recommendations`. It does not use an LLM, does not generate
-schedules outside the solver, and does not change normal `/solve` behavior.
+the response includes `recommendation_type=what_if`. Supported scenario types
+are `set_availability` and `increase_employee_max_hours`. Scenario generation
+is intentionally narrow and capped: it tries availability changes for qualified
+unavailable employees on shortage slots, and minimal max-weekly-hours increases
+when an otherwise useful employee is blocked by `exceeds_weekly_hours`. It
+re-solves each scenario, reports grounded shortage/objective comparisons, and
+reports unsolved over-limit candidates in `discarded_scenarios`. Returned
+recommendations are also capped through `limits.max_recommendations`; positive
+over-limit results are reported in `discarded_recommendations`. It does not use
+an LLM, does not generate schedules outside the solver, does not mutate the
+original solve request, and does not change normal `/solve` behavior.
 
 Run benchmark fixtures:
 

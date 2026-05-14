@@ -126,10 +126,12 @@ keep caller-provided structured intent authoritative.
 The recommendation engine in `workforce_scheduling.recommendations` is also
 deterministic. The current goal is limited to `reduce_shortages`; it evaluates
 small availability-change scenarios for qualified unavailable employees on
-shortage slots and re-solves with the existing CP-SAT model. The recommendation
-contract version is `1`, and the only current scenario type is
-`set_availability`. Responses include `recommendation_type=what_if`. It is
-capped at 5 solved scenarios per request in the in-process prototype;
+shortage slots, and minimal max-weekly-hours increases for qualified available
+employees blocked only by `exceeds_weekly_hours`. Every scenario re-solves with
+the existing CP-SAT model. The recommendation contract version is `1`, and the
+current scenario types are `set_availability` and
+`increase_employee_max_hours`. Responses include `recommendation_type=what_if`.
+It is capped at 5 solved scenarios per request in the in-process prototype;
 additional candidates are reported as discarded instead of being solved.
 Returned recommendations are capped at 5 as well; positive over-limit results
 are reported in `discarded_recommendations`. Recommendations are

@@ -4,6 +4,7 @@ import copy
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .data import shift_duration_hours
 from .schemas import (
     RESPONSE_MODE_DEBUG,
     SchemaValidationError,
@@ -17,7 +18,11 @@ SUPPORTED_RECOMMENDATION_GOALS = (RECOMMENDATION_GOAL_REDUCE_SHORTAGES,)
 RECOMMENDATION_CONTRACT_VERSION = 1
 RECOMMENDATION_TYPE_WHAT_IF = "what_if"
 SCENARIO_TYPE_SET_AVAILABILITY = "set_availability"
-SUPPORTED_SCENARIO_TYPES = (SCENARIO_TYPE_SET_AVAILABILITY,)
+SCENARIO_TYPE_INCREASE_EMPLOYEE_MAX_HOURS = "increase_employee_max_hours"
+SUPPORTED_SCENARIO_TYPES = (
+    SCENARIO_TYPE_SET_AVAILABILITY,
+    SCENARIO_TYPE_INCREASE_EMPLOYEE_MAX_HOURS,
+)
 DISCARDED_MAX_SCENARIO_LIMIT = "MAX_SCENARIO_LIMIT"
 DISCARDED_MAX_RECOMMENDATION_LIMIT = "MAX_RECOMMENDATION_LIMIT"
 MAX_RECOMMENDATION_SCENARIOS = 5
@@ -94,8 +99,10 @@ def _shortage_reduction_scenario_candidates(
         for employee in employees
         if isinstance(employee, Mapping) and "employee_id" in employee
     }
+    assigned_hours_by_employee = _assigned_hours_by_employee(baseline_result_payload)
     scenarios: list[dict[str, Any]] = []
-    seen_changes: set[tuple[int, int, int, str]] = set()
+    seen_availability_changes: set[tuple[int, int, int, str]] = set()
+    seen_max_hours_changes: set[tuple[int, int, int, str]] = set()
 
     diagnostics = _list_field(baseline_result_payload, "demanded_slot_diagnostics")
     for diagnostic in sorted(
@@ -120,9 +127,9 @@ def _shortage_reduction_scenario_candidates(
             if not _availability_is_false(availability, day, shift):
                 continue
             change_key = (employee_id, day, shift, role)
-            if change_key in seen_changes:
+            if change_key in seen_availability_changes:
                 continue
-            seen_changes.add(change_key)
+            seen_availability_changes.add(change_key)
             scenario_id = (
                 f"make_employee_{employee_id}_available_day_{day}_"
                 f"shift_{shift}_role_{role}"
@@ -148,6 +155,63 @@ def _shortage_reduction_scenario_candidates(
                             "role": role,
                             "from": False,
                             "to": True,
+                        }
+                    ],
+                }
+            )
+        for employee_id in sorted(
+            int(value) for value in blocked.get("exceeds_weekly_hours", [])
+        ):
+            employee = employee_index.get(employee_id)
+            if employee is None:
+                continue
+            role = str(diagnostic["role"])
+            if role not in employee.get("roles", []):
+                continue
+            day = int(diagnostic["day"])
+            shift = int(diagnostic["shift"])
+            if _has_non_hours_blocker(blocked, employee_id):
+                continue
+            assigned_hours = assigned_hours_by_employee.get(employee_id, 0)
+            duration = shift_duration_hours(
+                _list_field(problem, "shift_start_hours"),
+                _list_field(problem, "shift_end_hours"),
+                shift,
+            )
+            current_max_hours = int(employee["max_weekly_hours"])
+            new_max_hours = assigned_hours + duration
+            if new_max_hours <= current_max_hours:
+                continue
+            change_key = (employee_id, day, shift, role)
+            if change_key in seen_max_hours_changes:
+                continue
+            seen_max_hours_changes.add(change_key)
+            scenario_id = (
+                f"increase_employee_{employee_id}_max_hours_to_{new_max_hours}_"
+                f"for_day_{day}_shift_{shift}_role_{role}"
+            )
+            scenarios.append(
+                {
+                    "scenario_id": scenario_id,
+                    "goal": RECOMMENDATION_GOAL_REDUCE_SHORTAGES,
+                    "title": (
+                        f"Increase employee {employee_id} max weekly hours "
+                        f"from {current_max_hours} to {new_max_hours}"
+                    ),
+                    "description": (
+                        "Scenario changes only this employee max weekly hours "
+                        "and re-solves with the existing CP-SAT model."
+                    ),
+                    "changes": [
+                        {
+                            "type": SCENARIO_TYPE_INCREASE_EMPLOYEE_MAX_HOURS,
+                            "employee_id": employee_id,
+                            "day": day,
+                            "shift": shift,
+                            "role": role,
+                            "from": current_max_hours,
+                            "to": new_max_hours,
+                            "increase_by": new_max_hours - current_max_hours,
                         }
                     ],
                 }
@@ -420,8 +484,19 @@ def _apply_change(
     change: Mapping[str, Any],
 ) -> None:
     change_type = change.get("type")
-    if change_type != SCENARIO_TYPE_SET_AVAILABILITY:
-        raise ScenarioValidationError(f"Unsupported scenario change {change_type}")
+    if change_type == SCENARIO_TYPE_SET_AVAILABILITY:
+        _apply_set_availability_change(solve_request_payload, change)
+        return
+    if change_type == SCENARIO_TYPE_INCREASE_EMPLOYEE_MAX_HOURS:
+        _apply_increase_employee_max_hours_change(solve_request_payload, change)
+        return
+    raise ScenarioValidationError(f"Unsupported scenario change {change_type}")
+
+
+def _apply_set_availability_change(
+    solve_request_payload: dict[str, Any],
+    change: Mapping[str, Any],
+) -> None:
     employee_id = int(change["employee_id"])
     day = int(change["day"])
     shift = int(change["shift"])
@@ -438,6 +513,53 @@ def _apply_change(
         availability[day][shift] = bool(change["to"])
         return
     raise ScenarioValidationError(f"Unknown employee {employee_id}")
+
+
+def _apply_increase_employee_max_hours_change(
+    solve_request_payload: dict[str, Any],
+    change: Mapping[str, Any],
+) -> None:
+    employee_id = int(change["employee_id"])
+    new_max_hours = int(change["to"])
+    current_max_hours = int(change["from"])
+    if new_max_hours <= current_max_hours:
+        raise ScenarioValidationError(
+            "increase_employee_max_hours change must increase max_weekly_hours"
+        )
+    problem = _mapping_field(solve_request_payload, "problem")
+    employees = _list_field(problem, "employees")
+    for employee in employees:
+        if int(employee["employee_id"]) != employee_id:
+            continue
+        if int(employee["max_weekly_hours"]) != current_max_hours:
+            raise ScenarioValidationError(
+                f"max_weekly_hours baseline mismatch for employee {employee_id}"
+            )
+        employee["max_weekly_hours"] = new_max_hours
+        return
+    raise ScenarioValidationError(f"Unknown employee {employee_id}")
+
+
+def _assigned_hours_by_employee(result_payload: Mapping[str, Any]) -> dict[int, int]:
+    fairness_metrics = _mapping_field(result_payload, "fairness_metrics")
+    records = _list_field(fairness_metrics, "assigned_hours_per_employee")
+    return {
+        int(record["employee_id"]): int(record["assigned_hours"])
+        for record in records
+        if isinstance(record, Mapping)
+    }
+
+
+def _has_non_hours_blocker(
+    blocked_employee_ids_by_reason: Mapping[str, Any],
+    employee_id: int,
+) -> bool:
+    for reason, employee_ids in blocked_employee_ids_by_reason.items():
+        if reason == "exceeds_weekly_hours":
+            continue
+        if employee_id in {int(value) for value in employee_ids}:
+            return True
+    return False
 
 
 def _availability_is_false(availability: list[Any], day: int, shift: int) -> bool:

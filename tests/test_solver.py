@@ -1760,7 +1760,10 @@ def test_assistant_response_routes_shortage_recommendations_to_engine() -> None:
         "goal": "reduce_shortages",
         "recommendation_type": "what_if",
         "recommendation_contract_version": 1,
-        "supported_scenario_types": ["set_availability"],
+        "supported_scenario_types": [
+            "set_availability",
+            "increase_employee_max_hours",
+        ],
         "uses_external_llm": False,
         "changes_solver_behavior": False,
     }
@@ -1805,6 +1808,63 @@ def test_recommendations_generate_shortage_reduction_scenarios() -> None:
                     "role": "worker",
                     "from": False,
                     "to": True,
+                }
+            ],
+        }
+    ]
+
+
+def test_recommendations_generate_max_hours_scenario_from_shortage_evidence() -> None:
+    roles = ["worker"]
+    demand = _build_demand(2, 2, roles)
+    demand[0][0]["worker"] = 1
+    demand[1][0]["worker"] = 1
+    data = _make_problem(
+        employees=[
+            _make_employee(
+                0,
+                roles,
+                [[True, False], [True, False]],
+                max_weekly_hours=8,
+            ),
+        ],
+        roles=roles,
+        shift_start_hours=[8, 16],
+        shift_end_hours=[16, 24],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+    request_payload = solve_request_to_payload(data, time_limit_sec=5.0, seed=1)
+    baseline_response = solve_payload(json.loads(json.dumps(request_payload)))
+    baseline_result = baseline_response["result"]
+
+    scenarios = generate_shortage_reduction_scenarios(
+        request_payload,
+        baseline_result,
+    )
+
+    assert scenarios == [
+        {
+            "scenario_id": (
+                "increase_employee_0_max_hours_to_16_for_day_0_shift_0_role_worker"
+            ),
+            "goal": "reduce_shortages",
+            "title": "Increase employee 0 max weekly hours from 8 to 16",
+            "description": (
+                "Scenario changes only this employee max weekly hours "
+                "and re-solves with the existing CP-SAT model."
+            ),
+            "changes": [
+                {
+                    "type": "increase_employee_max_hours",
+                    "employee_id": 0,
+                    "day": 0,
+                    "shift": 0,
+                    "role": "worker",
+                    "from": 8,
+                    "to": 16,
+                    "increase_by": 8,
                 }
             ],
         }
@@ -1856,9 +1916,57 @@ def test_recommendations_reduce_shortages_with_grounded_scenario_solve() -> None
     assert response["metadata"]["uses_external_llm"] is False
     assert response["metadata"]["recommendation_type"] == "what_if"
     assert response["metadata"]["recommendation_contract_version"] == 1
-    assert response["metadata"]["supported_scenario_types"] == ["set_availability"]
+    assert response["metadata"]["supported_scenario_types"] == [
+        "set_availability",
+        "increase_employee_max_hours",
+    ]
     assert response["metadata"]["max_recommendations"] == 5
     json.dumps(response, sort_keys=True)
+
+
+def test_recommendations_reduce_shortages_with_max_hours_scenario_solve() -> None:
+    roles = ["worker"]
+    demand = _build_demand(2, 2, roles)
+    demand[0][0]["worker"] = 1
+    demand[1][0]["worker"] = 1
+    data = _make_problem(
+        employees=[
+            _make_employee(
+                0,
+                roles,
+                [[True, False], [True, False]],
+                max_weekly_hours=8,
+            ),
+        ],
+        roles=roles,
+        shift_start_hours=[8, 16],
+        shift_end_hours=[16, 24],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+    request_payload = solve_request_to_payload(data, time_limit_sec=5.0, seed=1)
+
+    response = recommend_scenarios(request_payload)
+
+    assert response["baseline"]["total_shortage"] == 1
+    assert response["summary"]["generated_scenario_count"] == 1
+    assert response["summary"]["recommendation_count"] == 1
+    assert response["summary"]["best_shortage_reduction"] == 1
+    assert response["recommendations"][0]["changes"] == [
+        {
+            "type": "increase_employee_max_hours",
+            "employee_id": 0,
+            "day": 0,
+            "shift": 0,
+            "role": "worker",
+            "from": 8,
+            "to": 16,
+            "increase_by": 8,
+        }
+    ]
+    assert response["recommendations"][0]["comparison"]["shortage_reduction"] == 1
+    assert response["evaluated_scenarios"][0]["snapshot"]["total_shortage"] == 0
 
 
 def test_recommendations_return_empty_when_no_shortage_exists() -> None:
@@ -2086,6 +2194,49 @@ def test_recommendations_do_not_mutate_solve_request_payload() -> None:
     assert request_payload == original_payload
 
 
+def test_recommendations_max_hours_scenario_does_not_mutate_request_payload() -> None:
+    roles = ["worker"]
+    demand = _build_demand(2, 2, roles)
+    demand[0][0]["worker"] = 1
+    demand[1][0]["worker"] = 1
+    data = _make_problem(
+        employees=[
+            _make_employee(
+                0,
+                roles,
+                [[True, False], [True, False]],
+                max_weekly_hours=8,
+            ),
+        ],
+        roles=roles,
+        shift_start_hours=[8, 16],
+        shift_end_hours=[16, 24],
+        demand=demand,
+        min_rest_hours=8,
+        max_consecutive_days=5,
+    )
+    request_payload = solve_request_to_payload(
+        data,
+        time_limit_sec=5.0,
+        seed=1,
+        response_mode=RESPONSE_MODE_COMPACT,
+    )
+    original_payload = json.loads(json.dumps(request_payload))
+
+    response = recommendation_response_from_request(
+        {
+            "goal": "reduce_shortages",
+            "solve_request": request_payload,
+        }
+    )
+
+    assert response["summary"]["recommendation_count"] == 1
+    assert response["recommendations"][0]["changes"][0]["type"] == (
+        "increase_employee_max_hours"
+    )
+    assert request_payload == original_payload
+
+
 def test_recommendations_reject_unknown_scenario_change_type() -> None:
     request_payload = solve_request_to_payload(
         _small_fully_feasible_problem(),
@@ -2115,6 +2266,40 @@ def test_recommendations_reject_unknown_scenario_change_type() -> None:
         )
 
     assert str(exc_info.value) == "Unsupported scenario change add_employee"
+
+
+def test_recommendations_reject_non_increasing_max_hours_change() -> None:
+    request_payload = solve_request_to_payload(
+        _small_fully_feasible_problem(),
+        time_limit_sec=5.0,
+        seed=1,
+    )
+
+    with pytest.raises(ScenarioValidationError) as exc_info:
+        evaluate_scenario(
+            request_payload,
+            {
+                "scenario_id": "bad_max_hours_scenario",
+                "goal": "reduce_shortages",
+                "title": "Bad max hours scenario",
+                "description": "Unsupported non-increase.",
+                "changes": [
+                    {
+                        "type": "increase_employee_max_hours",
+                        "employee_id": 0,
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "from": 40,
+                        "to": 40,
+                    }
+                ],
+            },
+        )
+
+    assert str(exc_info.value) == (
+        "increase_employee_max_hours change must increase max_weekly_hours"
+    )
 
 
 def test_explain_assignment_returns_non_assignment_explanation_when_not_assigned() -> None:

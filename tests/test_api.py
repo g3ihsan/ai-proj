@@ -228,6 +228,31 @@ def _multi_recommendation_solve_request() -> Dict[str, object]:
     return request_payload
 
 
+def _max_hours_recommendation_solve_request() -> Dict[str, object]:
+    request_payload = _small_solve_request()
+    request_payload["problem"]["employees"] = [
+        {
+            "employee_id": 0,
+            "name": "E0",
+            "roles": ["worker"],
+            "hourly_cost": 20,
+            "max_weekly_hours": 8,
+            "availability": [[True, False], [True, False]],
+        }
+    ]
+    request_payload["problem"]["days"] = [0, 1]
+    request_payload["problem"]["shifts"] = ["morning", "evening"]
+    request_payload["problem"]["shift_start_hours"] = [8, 16]
+    request_payload["problem"]["shift_end_hours"] = [16, 24]
+    request_payload["problem"]["demand"] = [
+        {"day": 0, "shift": 0, "role": "worker", "required": 1},
+        {"day": 0, "shift": 1, "role": "worker", "required": 0},
+        {"day": 1, "shift": 0, "role": "worker", "required": 1},
+        {"day": 1, "shift": 1, "role": "worker", "required": 0},
+    ]
+    return request_payload
+
+
 def _explanation_request(
     request_payload: Dict[str, object],
     target: Dict[str, object],
@@ -362,7 +387,10 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "recommendation_contract_version": 1,
             "uses_external_llm": False,
             "supported_goals": ["reduce_shortages"],
-            "supported_scenario_types": ["set_availability"],
+            "supported_scenario_types": [
+                "set_availability",
+                "increase_employee_max_hours",
+            ],
             "max_scenarios": 5,
             "max_recommendations": 5,
             "response_shape": {
@@ -1056,7 +1084,10 @@ def test_api_assistant_ask_routes_recommendation_question() -> None:
         "goal": "reduce_shortages",
         "recommendation_type": "what_if",
         "recommendation_contract_version": 1,
-        "supported_scenario_types": ["set_availability"],
+        "supported_scenario_types": [
+            "set_availability",
+            "increase_employee_max_hours",
+        ],
         "uses_external_llm": False,
         "changes_solver_behavior": False,
     }
@@ -1508,9 +1539,44 @@ def test_api_recommendations_returns_grounded_shortage_reduction() -> None:
     assert result_payload["metadata"]["uses_external_llm"] is False
     assert result_payload["metadata"]["recommendation_type"] == "what_if"
     assert result_payload["metadata"]["supported_scenario_types"] == [
-        "set_availability"
+        "set_availability",
+        "increase_employee_max_hours",
     ]
     json.dumps(response_payload, sort_keys=True)
+
+
+def test_api_recommendations_returns_grounded_max_hours_reduction() -> None:
+    response = _api_request(
+        "POST",
+        "/recommendations",
+        json_payload={
+            "goal": "reduce_shortages",
+            "solve_request": _max_hours_recommendation_solve_request(),
+        },
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["baseline"]["total_shortage"] == 1
+    assert result_payload["summary"]["generated_scenario_count"] == 1
+    assert result_payload["summary"]["recommendation_count"] == 1
+    assert result_payload["recommendations"][0]["changes"] == [
+        {
+            "type": "increase_employee_max_hours",
+            "employee_id": 0,
+            "day": 0,
+            "shift": 0,
+            "role": "worker",
+            "from": 8,
+            "to": 16,
+            "increase_by": 8,
+        }
+    ]
+    assert result_payload["recommendations"][0]["comparison"][
+        "shortage_reduction"
+    ] == 1
 
 
 def test_api_recommend_what_if_alias_matches_recommendations() -> None:
