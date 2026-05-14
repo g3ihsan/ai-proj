@@ -415,6 +415,18 @@ for that slot using the canonical employee schema with `hourly_cost`. It reports
 only grounded comparisons. It does not change solver objectives, constraints,
 fairness behavior, warm-start behavior, or normal `/solve` requests.
 
+Temporary employee scenarios are deterministic. The generated `employee_id` is
+one greater than the maximum existing employee ID, so it does not collide with
+the input roster. The generated name is `Temporary {role} day {day} shift
+{shift}`. The synthetic employee has exactly one role, matching the shortage
+role, and an availability matrix with the same day/shift dimensions as the
+problem where only the target shortage day/shift is `true`. Its
+`max_weekly_hours` is set to at least the target shift duration. Its
+`hourly_cost` uses the maximum existing cost among employees with the shortage
+role, falls back to the maximum existing employee cost when no employee has that
+role, and falls back deterministically to `0` when no valid existing cost is
+available.
+
 Request:
 
 ```json
@@ -502,7 +514,13 @@ change is operationally valid before using it as real input.
 Scenario mutation validation is strict: required change fields must be present,
 integer fields reject booleans and non-integers, boolean fields must be real
 booleans, role strings must be non-empty when provided, and malformed scenario
-changes return `ScenarioValidationError` with HTTP 400.
+changes return `ScenarioValidationError` with HTTP 400. Temporary employee
+changes also reject duplicate employee IDs, unknown roles, unknown day/shift
+targets, negative `hourly_cost`, and non-positive `max_weekly_hours`.
+Recommendation evaluation deep-copies the solve request before applying
+scenario changes, so the original request payload is not mutated.
+Recommendations are scenario comparisons and decision-support evidence, not
+guarantees that managers should apply the change without operational review.
 
 ### `POST /solve-csv`
 

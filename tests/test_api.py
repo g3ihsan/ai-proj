@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 import workforce_scheduling.api as api_module
+import workforce_scheduling.recommendations as recommendations_module
 from workforce_scheduling.api import (
     MAX_CSV_UPLOAD_BYTES,
     MAX_JSON_REQUEST_BYTES,
@@ -1472,6 +1473,24 @@ def test_api_assistant_ask_is_deterministic_and_json_serializable() -> None:
     json.dumps(first, sort_keys=True)
 
 
+def test_api_assistant_recommendation_response_is_deterministic_and_json_serializable() -> None:
+    json_payload = {
+        "question": "What should I change to reduce shortages?",
+        "solve_request": _temporary_employee_recommendation_solve_request(),
+    }
+
+    first = _api_request("POST", "/assistant/ask", json_payload=json_payload).json()
+    second = _api_request("POST", "/assistant/ask", json_payload=json_payload).json()
+
+    assert first == second
+    assert first["result"]["grounding"]["supported_scenario_types"] == [
+        "set_availability",
+        "increase_employee_max_hours",
+        "add_temporary_employee",
+    ]
+    json.dumps(first, sort_keys=True)
+
+
 def test_api_assistant_ask_does_not_change_debug_solve_output() -> None:
     request_payload = _small_solve_request()
 
@@ -1496,6 +1515,28 @@ def test_api_assistant_ask_does_not_change_debug_solve_output() -> None:
 
 def test_api_assistant_recommendations_do_not_change_debug_solve_output() -> None:
     request_payload = _shortage_reduction_solve_request()
+
+    before = _api_request("POST", "/solve", json_payload=request_payload).json()
+    assistant_response = _api_request(
+        "POST",
+        "/assistant/ask",
+        json_payload={
+            "question": "Recommend a way to fix shortages",
+            "solve_request": request_payload,
+        },
+    ).json()
+    after = _api_request("POST", "/solve", json_payload=request_payload).json()
+
+    assert before["ok"] is True
+    assert assistant_response["ok"] is True
+    assert after["ok"] is True
+    assert _stable_solve_output(before["result"]) == _stable_solve_output(
+        after["result"]
+    )
+
+
+def test_api_assistant_temporary_employee_recommendation_does_not_change_debug_solve_output() -> None:
+    request_payload = _temporary_employee_recommendation_solve_request()
 
     before = _api_request("POST", "/solve", json_payload=request_payload).json()
     assistant_response = _api_request(
@@ -1655,6 +1696,11 @@ def test_api_recommend_what_if_alias_matches_recommendations() -> None:
     ).json()
 
     assert what_if == recommendations
+    assert what_if["result"]["metadata"]["supported_scenario_types"] == [
+        "set_availability",
+        "increase_employee_max_hours",
+        "add_temporary_employee",
+    ]
 
 
 def test_api_recommendations_rejects_invalid_request() -> None:
@@ -1794,6 +1840,53 @@ def test_api_recommendations_maps_scenario_validation_error_to_400(
     assert response.status_code == 400
     assert response_payload["ok"] is False
     assert response_payload["error"]["type"] == "ScenarioValidationError"
+
+
+def test_api_recommendations_maps_invalid_temporary_employee_change_to_400(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _invalid_temporary_employee_candidates(_request_payload, _baseline_result):
+        return [
+            {
+                "scenario_id": "bad_temporary_employee",
+                "goal": "reduce_shortages",
+                "title": "Bad temporary employee",
+                "description": "Invalid duplicate temporary employee id.",
+                "changes": [
+                    {
+                        "type": "add_temporary_employee",
+                        "employee_id": 0,
+                        "name": "Temporary worker day 0 shift 0",
+                        "role": "worker",
+                        "day": 0,
+                        "shift": 0,
+                        "hourly_cost": 20,
+                        "max_weekly_hours": 8,
+                    }
+                ],
+            }
+        ]
+
+    monkeypatch.setattr(
+        recommendations_module,
+        "_shortage_reduction_scenario_candidates",
+        _invalid_temporary_employee_candidates,
+    )
+
+    response = _api_request(
+        "POST",
+        "/recommendations",
+        json_payload={
+            "goal": "reduce_shortages",
+            "solve_request": _small_solve_request(),
+        },
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"]["type"] == "ScenarioValidationError"
+    assert response_payload["error"]["message"] == "Employee 0 already exists"
 
 
 def test_api_recommendations_maps_scenario_evaluation_error_to_500(

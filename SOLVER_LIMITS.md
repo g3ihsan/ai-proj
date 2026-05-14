@@ -140,8 +140,22 @@ are reported in `discarded_recommendations`. Recommendations are
 decision-support evidence, not automatic roster edits, and they do not add
 objectives, constraints, forecasting, or LLM-generated schedule changes.
 Scenario mutation validation is intentionally strict so malformed scenario
-changes fail as `ScenarioValidationError` instead of leaking raw Python casting
-or indexing errors.
+changes fail at the recommendation boundary.
+
+Temporary employee recommendations are deliberately bounded. They generate a
+single synthetic employee per shortage day/shift/role only after existing
+availability and max-hours candidates are unavailable for that slot. The
+temporary employee ID is deterministic and non-colliding, the name is
+deterministic, the employee has only the shortage role, and the availability
+matrix mirrors the problem dimensions with only the target slot available.
+Hourly cost is deterministic: maximum cost among existing employees with the
+shortage role, then maximum existing employee cost, then `0` when no valid cost
+exists. Applying a scenario uses a copied solve request, so recommendation
+evaluation does not mutate the caller's original payload. These scenarios are
+comparisons under the current CP-SAT model, not guarantees that the staffing
+change is operationally approved. Malformed scenario changes fail as
+`ScenarioValidationError` instead of leaking raw Python casting or indexing
+errors.
 The current evidence contract version is `1`. Public evidence uses stable
 uppercase reason codes. Internal lowercase blocker names are deliberately mapped
 to those public codes; unknown internal blocker names should fail tests instead

@@ -201,6 +201,17 @@ integers, non-integer numeric fields, non-boolean availability targets, empty
 role strings, and malformed employee max-hours baselines with
 `ScenarioValidationError`.
 
+Temporary employee hardening tests pin deterministic generation details:
+non-colliding `employee_id`, deterministic name, exactly one role matching the
+shortage role, availability dimensions matching problem days/shifts with only
+the target slot available, `max_weekly_hours` covering the target shift
+duration, deterministic `hourly_cost` selection, no temporary scenario when an
+availability or max-hours scenario exists for the same slot, and at most one
+temporary scenario per day/shift/role shortage slot. Mutation tests also cover
+duplicate IDs, missing fields, booleans-as-integers, unknown role/day/shift
+targets, negative costs, non-positive hours, valid append behavior, and original
+request immutability.
+
 Run benchmark fixtures:
 
 ```bash

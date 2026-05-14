@@ -744,22 +744,30 @@ def _next_employee_id(employees: list[Any]) -> int:
 
 def _temporary_hourly_cost(employees: list[Any], role: str) -> int:
     role_costs = [
-        int(employee["hourly_cost"])
+        hourly_cost
         for employee in employees
-        if isinstance(employee, Mapping)
-        and role in employee.get("roles", [])
-        and "hourly_cost" in employee
+        if isinstance(employee, Mapping) and role in employee.get("roles", [])
+        for hourly_cost in [_optional_non_bool_int(employee.get("hourly_cost"))]
+        if hourly_cost is not None
     ]
     all_costs = [
-        int(employee["hourly_cost"])
+        hourly_cost
         for employee in employees
-        if isinstance(employee, Mapping) and "hourly_cost" in employee
+        if isinstance(employee, Mapping)
+        for hourly_cost in [_optional_non_bool_int(employee.get("hourly_cost"))]
+        if hourly_cost is not None
     ]
     if role_costs:
         return max(role_costs)
     if all_costs:
         return max(all_costs)
     return 0
+
+
+def _optional_non_bool_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
 
 
 def _availability_is_false(availability: list[Any], day: int, shift: int) -> bool:
