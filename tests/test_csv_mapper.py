@@ -258,6 +258,14 @@ def test_csv_mapping_preview_builds_explicit_apply_plan_without_mutation() -> No
     assert preview["will_solve"] is False
     apply_plan = preview["apply_plan"]
     assert apply_plan["type"] == "csv_mapping_apply_plan"
+    assert apply_plan["can_apply"] is True
+    assert apply_plan["reason"] == "ready"
+    assert apply_plan["adapter_readiness"] == {
+        "scope": "headers_only",
+        "headers_ready_for_csv_adapter": True,
+        "row_data_validated": False,
+        "reason": "ready",
+    }
     assert apply_plan["will_mutate_files"] is False
     assert apply_plan["will_solve"] is False
     assert apply_plan["canonical_headers_after_apply"] == [
@@ -300,6 +308,8 @@ def test_csv_mapping_preview_can_use_suggested_mapping_report() -> None:
 
     assert preview["status"] == "complete"
     assert preview["mapping"] == report
+    assert preview["apply_plan"]["can_apply"] is True
+    assert preview["apply_plan"]["reason"] == "ready"
     assert preview["apply_plan"]["canonical_headers_after_apply"] == [
         "day",
         "shift",
@@ -322,6 +332,14 @@ def test_csv_mapping_preview_marks_day_name_availability_for_review() -> None:
     )
 
     assert preview["status"] == "needs_review"
+    assert preview["apply_plan"]["can_apply"] is False
+    assert preview["apply_plan"]["reason"] == "requires_review"
+    assert preview["apply_plan"]["adapter_readiness"] == {
+        "scope": "headers_only",
+        "headers_ready_for_csv_adapter": False,
+        "row_data_validated": False,
+        "reason": "requires_review",
+    }
     availability_action = preview["apply_plan"]["column_renames"][-1]
     assert availability_action["canonical_field"] == "availability"
     assert availability_action["source_header"] == "Available Monday Morning"
@@ -349,6 +367,8 @@ def test_csv_mapping_preview_reports_missing_fields_for_partial_mapping() -> Non
     )
 
     assert apply_plan["status"] == "needs_review"
+    assert apply_plan["can_apply"] is False
+    assert apply_plan["reason"] == "missing_required_fields"
     assert apply_plan["missing_fields"] == [
         "roles",
         "max_weekly_hours",
@@ -362,6 +382,160 @@ def test_csv_mapping_preview_reports_missing_fields_for_partial_mapping() -> Non
         "employees apply plan missing required field(s): "
         "roles, max_weekly_hours, availability"
     )
+
+
+def test_csv_mapping_preview_reports_duplicate_target_reason() -> None:
+    apply_plan = build_apply_plan(
+        csv_type="employees",
+        headers=[
+            "Staff ID",
+            "Full Name",
+            "Skills",
+            "Hourly Rate",
+            "Weekly Hours Limit",
+            "Avail D0 S0",
+            "Available Day0 Shift0",
+        ],
+    )
+
+    assert apply_plan["status"] == "needs_review"
+    assert apply_plan["can_apply"] is False
+    assert apply_plan["reason"] == "duplicate_target_headers"
+    assert apply_plan["adapter_readiness"]["headers_ready_for_csv_adapter"] is False
+    assert apply_plan["warnings"] == [
+        "Multiple source headers map to the same target header(s): available_day0_shift0"
+    ]
+    with pytest.raises(CsvMappingValidationError, match="duplicate target"):
+        validate_apply_plan(apply_plan)
+
+
+def test_validate_apply_plan_rejects_inconsistent_reason_and_readiness() -> None:
+    apply_plan = build_apply_plan(
+        csv_type="demand",
+        headers=["Day", "Shift", "Role", "Required"],
+    )
+
+    missing_can_apply = dict(apply_plan)
+    missing_can_apply.pop("can_apply")
+    with pytest.raises(CsvMappingValidationError, match="can_apply must be a boolean"):
+        validate_apply_plan(missing_can_apply)
+
+    invalid_reason = {**apply_plan, "reason": "unknown"}
+    with pytest.raises(CsvMappingValidationError, match="reason is invalid"):
+        validate_apply_plan(invalid_reason)
+
+    complete_without_can_apply = {
+        **apply_plan,
+        "can_apply": False,
+        "adapter_readiness": {
+            **apply_plan["adapter_readiness"],
+            "headers_ready_for_csv_adapter": False,
+        },
+    }
+    with pytest.raises(
+        CsvMappingValidationError,
+        match="complete apply plan must set can_apply to true",
+    ):
+        validate_apply_plan(complete_without_can_apply)
+
+    complete_with_wrong_reason = {
+        **apply_plan,
+        "reason": "requires_review",
+        "adapter_readiness": {
+            **apply_plan["adapter_readiness"],
+            "reason": "requires_review",
+        },
+    }
+    with pytest.raises(
+        CsvMappingValidationError,
+        match="complete apply plan reason must be ready",
+    ):
+        validate_apply_plan(complete_with_wrong_reason)
+
+    wrong_readiness = {
+        **apply_plan,
+        "adapter_readiness": {
+            **apply_plan["adapter_readiness"],
+            "headers_ready_for_csv_adapter": False,
+        },
+    }
+    with pytest.raises(
+        CsvMappingValidationError,
+        match="adapter readiness must match can_apply",
+    ):
+        validate_apply_plan(wrong_readiness)
+
+    incomplete_with_can_apply = build_apply_plan(
+        csv_type="employees",
+        headers=["Staff ID"],
+        mapping={"employee_id": "Staff ID"},
+    )
+    incomplete_with_can_apply = {
+        **incomplete_with_can_apply,
+        "can_apply": True,
+        "adapter_readiness": {
+            **incomplete_with_can_apply["adapter_readiness"],
+            "headers_ready_for_csv_adapter": True,
+        },
+    }
+    with pytest.raises(
+        CsvMappingValidationError,
+        match="incomplete apply plan must set can_apply to false",
+    ):
+        validate_apply_plan(incomplete_with_can_apply)
+
+
+def test_csv_mapping_preview_validates_supplied_mapping_report() -> None:
+    headers = ["Day", "Shift", "Role", "Required"]
+    report = suggest_demand_column_mapping(headers)
+
+    preview = csv_mapping_preview(
+        csv_type="demand",
+        headers=headers,
+        mapping_report=report,
+    )
+    assert preview["apply_plan"]["reason"] == "ready"
+
+    external_llm_report = {**report, "uses_external_llm": True}
+    with pytest.raises(CsvMappingValidationError, match="external LLM"):
+        csv_mapping_preview(
+            csv_type="demand",
+            headers=headers,
+            mapping_report=external_llm_report,
+        )
+
+    invalid_version_report = {**report, "csv_mapping_contract_version": 999}
+    with pytest.raises(CsvMappingValidationError, match="contract version"):
+        csv_mapping_preview(
+            csv_type="demand",
+            headers=headers,
+            mapping_report=invalid_version_report,
+        )
+
+    invalid_valid_report = {**report, "valid": "yes"}
+    with pytest.raises(CsvMappingValidationError, match="valid must be a boolean"):
+        csv_mapping_preview(
+            csv_type="demand",
+            headers=headers,
+            mapping_report=invalid_valid_report,
+        )
+
+    mismatched_missing = {**report, "missing_fields": ["role"]}
+    with pytest.raises(CsvMappingValidationError, match="missing_fields"):
+        csv_mapping_preview(
+            csv_type="demand",
+            headers=headers,
+            mapping_report=mismatched_missing,
+        )
+
+    duplicate_source_report = json.loads(json.dumps(report))
+    duplicate_source_report["mapping"]["role"]["source_header"] = "Day"
+    with pytest.raises(CsvMappingValidationError, match="assigned more than once"):
+        csv_mapping_preview(
+            csv_type="demand",
+            headers=headers,
+            mapping_report=duplicate_source_report,
+        )
 
 
 def test_preview_column_renames_rejects_invalid_explicit_mapping() -> None:

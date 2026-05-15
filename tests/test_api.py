@@ -696,6 +696,14 @@ def test_api_csv_mapping_preview_returns_deterministic_apply_plan() -> None:
     assert result_payload["uses_external_llm"] is False
     assert result_payload["will_mutate_files"] is False
     assert result_payload["will_solve"] is False
+    assert result_payload["apply_plan"]["can_apply"] is True
+    assert result_payload["apply_plan"]["reason"] == "ready"
+    assert result_payload["apply_plan"]["adapter_readiness"] == {
+        "scope": "headers_only",
+        "headers_ready_for_csv_adapter": True,
+        "row_data_validated": False,
+        "reason": "ready",
+    }
     assert result_payload["apply_plan"]["canonical_headers_after_apply"] == [
         "employee_id",
         "name",
@@ -728,6 +736,8 @@ def test_api_csv_mapping_preview_can_infer_mapping_without_solving() -> None:
 
     assert response.status_code == 200
     assert result_payload["status"] == "complete"
+    assert result_payload["apply_plan"]["can_apply"] is True
+    assert result_payload["apply_plan"]["reason"] == "ready"
     assert result_payload["apply_plan"]["canonical_headers_after_apply"] == [
         "day",
         "shift",
@@ -757,6 +767,11 @@ def test_api_csv_mapping_preview_marks_day_name_availability_for_review() -> Non
 
     assert response.status_code == 200
     assert result_payload["status"] == "needs_review"
+    assert result_payload["apply_plan"]["can_apply"] is False
+    assert result_payload["apply_plan"]["reason"] == "requires_review"
+    assert result_payload["apply_plan"]["adapter_readiness"][
+        "headers_ready_for_csv_adapter"
+    ] is False
     availability_action = result_payload["apply_plan"]["column_renames"][-1]
     assert availability_action["action"] == "requires_review"
     assert availability_action["target_header"] is None
@@ -784,6 +799,18 @@ def test_api_csv_mapping_preview_marks_day_name_availability_for_review() -> Non
                 "mapping": {"employee_id": "Missing"},
             },
             "mapping field employee_id references unknown header Missing",
+        ),
+        (
+            {
+                "csv_type": "demand",
+                "headers": ["Day"],
+                "mapping_report": {
+                    "type": "csv_column_mapping",
+                    "csv_type": "demand",
+                    "uses_external_llm": True,
+                },
+            },
+            "mapping_report must not use an external LLM",
         ),
     ],
 )

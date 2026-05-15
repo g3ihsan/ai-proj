@@ -740,6 +740,14 @@ Response:
     "apply_plan": {
       "type": "csv_mapping_apply_plan",
       "status": "complete",
+      "can_apply": true,
+      "reason": "ready",
+      "adapter_readiness": {
+        "scope": "headers_only",
+        "headers_ready_for_csv_adapter": true,
+        "row_data_validated": false,
+        "reason": "ready"
+      },
       "will_mutate_files": false,
       "will_solve": false,
       "column_renames": [
@@ -766,7 +774,17 @@ warning. Explicit day/shift variants such as `Avail D0 S0` are previewed as
 `available_day0_shift0`. Day-name variants such as `Available Monday Morning`
 are recognized as availability evidence but return `action=requires_review`
 because they do not encode the zero-based day/shift indexes required by
-`csv_adapter.py`.
+`csv_adapter.py`. `apply_plan.can_apply` is true only when the plan is complete,
+has no unresolved review actions, and has no duplicate target headers;
+`needs_review` plans set `can_apply=false`. `apply_plan.reason` is a stable
+code: `ready`, `missing_required_fields`, `requires_review`, or
+`duplicate_target_headers`. `adapter_readiness` is header-scoped only:
+`headers_ready_for_csv_adapter` mirrors `can_apply`, `row_data_validated` is
+always false in this phase, and the preview still does not parse or validate
+row values. Supplied `mapping_report` objects are validated before preview use;
+reports with mismatched CSV type, unsupported fields, inconsistent
+`missing_fields`, duplicate source headers, or `uses_external_llm=true` return
+HTTP 400.
 
 ### `POST /solve-csv`
 
@@ -1056,7 +1074,8 @@ headers, warnings, and validation status. Incomplete reports are advisory and
 must be reviewed before files are renamed or transformed into the canonical CSV
 contract below. The optional preview/apply-plan endpoint shows deterministic
 column rename actions, `canonical_headers_after_apply`, unmapped headers,
-missing fields, review warnings, and explicit `will_mutate_files=false` /
+missing fields, review warnings, `can_apply`, `reason`, header-scoped
+`adapter_readiness`, and explicit `will_mutate_files=false` /
 `will_solve=false` flags.
 
 ### `employees.csv`

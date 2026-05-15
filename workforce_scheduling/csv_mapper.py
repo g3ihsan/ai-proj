@@ -13,6 +13,10 @@ MAPPING_STATUS_MISSING = "missing"
 APPLY_ACTION_RENAME = "rename_column"
 APPLY_ACTION_PRESERVE = "preserve_column"
 APPLY_ACTION_REVIEW = "requires_review"
+APPLY_REASON_READY = "ready"
+APPLY_REASON_MISSING_REQUIRED_FIELDS = "missing_required_fields"
+APPLY_REASON_REQUIRES_REVIEW = "requires_review"
+APPLY_REASON_DUPLICATE_TARGET_HEADERS = "duplicate_target_headers"
 DAY_NAME_TOKENS = {
     "mon",
     "monday",
@@ -500,16 +504,31 @@ def build_apply_plan(
         missing_fields=missing_fields,
         column_renames=column_renames,
     )
-    status = (
-        "complete"
-        if not missing_fields and not unresolved_actions and not _duplicate_targets(column_renames)
-        else "needs_review"
+    duplicate_targets = _duplicate_targets(column_renames)
+    can_apply = (
+        not missing_fields
+        and not unresolved_actions
+        and not duplicate_targets
+    )
+    status = "complete" if can_apply else "needs_review"
+    reason = _apply_plan_reason(
+        missing_fields=missing_fields,
+        unresolved_actions=unresolved_actions,
+        duplicate_targets=duplicate_targets,
     )
     return {
         "type": "csv_mapping_apply_plan",
         "csv_mapping_contract_version": CSV_MAPPING_CONTRACT_VERSION,
         "status": status,
+        "can_apply": can_apply,
+        "reason": reason,
         "csv_type": csv_type,
+        "adapter_readiness": {
+            "scope": "headers_only",
+            "headers_ready_for_csv_adapter": can_apply,
+            "row_data_validated": False,
+            "reason": reason,
+        },
         "will_mutate_files": False,
         "will_solve": False,
         "column_renames": column_renames,
@@ -533,6 +552,33 @@ def validate_apply_plan(apply_plan: Mapping[str, Any]) -> dict[str, Any]:
         raise CsvMappingValidationError("apply plan must not mutate files")
     if apply_plan.get("will_solve") is not False:
         raise CsvMappingValidationError("apply plan must not run the solver")
+    if not isinstance(apply_plan.get("can_apply"), bool):
+        raise CsvMappingValidationError("apply plan can_apply must be a boolean")
+    reason = apply_plan.get("reason")
+    if reason not in {
+        APPLY_REASON_READY,
+        APPLY_REASON_MISSING_REQUIRED_FIELDS,
+        APPLY_REASON_REQUIRES_REVIEW,
+        APPLY_REASON_DUPLICATE_TARGET_HEADERS,
+    }:
+        raise CsvMappingValidationError("apply plan reason is invalid")
+    adapter_readiness = apply_plan.get("adapter_readiness")
+    if not isinstance(adapter_readiness, Mapping):
+        raise CsvMappingValidationError("apply plan adapter_readiness must be an object")
+    if adapter_readiness.get("scope") != "headers_only":
+        raise CsvMappingValidationError("apply plan adapter_readiness scope is invalid")
+    if adapter_readiness.get("headers_ready_for_csv_adapter") is not apply_plan["can_apply"]:
+        raise CsvMappingValidationError(
+            "apply plan adapter readiness must match can_apply"
+        )
+    if adapter_readiness.get("row_data_validated") is not False:
+        raise CsvMappingValidationError(
+            "apply plan adapter readiness must not validate row data"
+        )
+    if adapter_readiness.get("reason") != reason:
+        raise CsvMappingValidationError(
+            "apply plan adapter readiness reason must match reason"
+        )
     column_renames = apply_plan.get("column_renames")
     if not isinstance(column_renames, list):
         raise CsvMappingValidationError("apply plan column_renames must be a list")
@@ -542,6 +588,18 @@ def validate_apply_plan(apply_plan: Mapping[str, Any]) -> dict[str, Any]:
             "apply plan has duplicate target header(s): "
             + ", ".join(duplicate_targets)
         )
+    if apply_plan.get("status") == "complete" and apply_plan["can_apply"] is not True:
+        raise CsvMappingValidationError(
+            "complete apply plan must set can_apply to true"
+        )
+    if apply_plan.get("status") == "complete" and reason != APPLY_REASON_READY:
+        raise CsvMappingValidationError("complete apply plan reason must be ready")
+    if apply_plan.get("status") != "complete" and apply_plan["can_apply"] is not False:
+        raise CsvMappingValidationError(
+            "incomplete apply plan must set can_apply to false"
+        )
+    if apply_plan.get("status") != "complete" and reason == APPLY_REASON_READY:
+        raise CsvMappingValidationError("incomplete apply plan reason must not be ready")
     if apply_plan.get("status") != "complete":
         missing_fields = apply_plan.get("missing_fields")
         if isinstance(missing_fields, list) and missing_fields:
@@ -737,12 +795,132 @@ def _extract_column_mapping_report(
         file_report = files[csv_type]
         if not isinstance(file_report, Mapping):
             raise CsvMappingValidationError("mapping_report file entry must be an object")
-        return dict(file_report)
+        return _validated_column_mapping_report(csv_type, file_report)
     if mapping_report.get("type") == "csv_column_mapping":
         if mapping_report.get("csv_type") != csv_type:
             raise CsvMappingValidationError("mapping_report csv_type does not match")
-        return dict(mapping_report)
+        return _validated_column_mapping_report(csv_type, mapping_report)
     raise CsvMappingValidationError("mapping_report type is invalid")
+
+
+def _validated_column_mapping_report(
+    csv_type: str,
+    mapping_report: Mapping[str, Any],
+) -> dict[str, Any]:
+    if mapping_report.get("type") != "csv_column_mapping":
+        raise CsvMappingValidationError("mapping_report file entry type is invalid")
+    if mapping_report.get("csv_type") != csv_type:
+        raise CsvMappingValidationError("mapping_report csv_type does not match")
+    if mapping_report.get("uses_external_llm") is not False:
+        raise CsvMappingValidationError("mapping_report must not use an external LLM")
+    if mapping_report.get("csv_mapping_contract_version") != CSV_MAPPING_CONTRACT_VERSION:
+        raise CsvMappingValidationError("mapping_report contract version is invalid")
+
+    canonical_fields = _canonical_fields_for_csv_type(csv_type)
+    if mapping_report.get("canonical_fields") != list(canonical_fields):
+        raise CsvMappingValidationError(
+            "mapping_report canonical_fields do not match csv_type"
+        )
+    mapping = mapping_report.get("mapping")
+    if not isinstance(mapping, Mapping):
+        raise CsvMappingValidationError("mapping_report mapping must be an object")
+    unknown_fields = sorted(str(field) for field in mapping if field not in canonical_fields)
+    if unknown_fields:
+        raise CsvMappingValidationError(
+            "mapping_report contains unsupported field(s): "
+            + ", ".join(unknown_fields)
+        )
+
+    missing_fields = mapping_report.get("missing_fields")
+    if not isinstance(missing_fields, list) or not all(
+        isinstance(field, str) for field in missing_fields
+    ):
+        raise CsvMappingValidationError("mapping_report missing_fields must be a list")
+    expected_missing_fields: list[str] = []
+    assigned_headers: set[str] = set()
+    for field in canonical_fields:
+        field_mapping = mapping.get(field)
+        if not isinstance(field_mapping, Mapping):
+            raise CsvMappingValidationError(
+                f"mapping_report field {field} must be an object"
+            )
+        status = field_mapping.get("status")
+        if status not in {MAPPING_STATUS_MAPPED, MAPPING_STATUS_MISSING}:
+            raise CsvMappingValidationError(
+                f"mapping_report field {field} status is invalid"
+            )
+        if status == MAPPING_STATUS_MISSING:
+            expected_missing_fields.append(field)
+            continue
+
+        source_headers = _mapped_source_headers(field, field_mapping)
+        if not source_headers:
+            raise CsvMappingValidationError(
+                f"mapping_report field {field} must include a source header"
+            )
+        for source_header in source_headers:
+            if source_header in assigned_headers:
+                raise CsvMappingValidationError(
+                    f"mapping_report source header {source_header} is assigned more than once"
+                )
+            assigned_headers.add(source_header)
+
+    if missing_fields != expected_missing_fields:
+        raise CsvMappingValidationError(
+            "mapping_report missing_fields do not match field statuses"
+        )
+    valid = mapping_report.get("valid")
+    if not isinstance(valid, bool):
+        raise CsvMappingValidationError("mapping_report valid must be a boolean")
+    if valid != (not expected_missing_fields):
+        raise CsvMappingValidationError("mapping_report valid does not match missing_fields")
+    unmapped_headers = mapping_report.get("unmapped_headers")
+    if not isinstance(unmapped_headers, list) or not all(
+        isinstance(header, str) for header in unmapped_headers
+    ):
+        raise CsvMappingValidationError("mapping_report unmapped_headers must be a list")
+    warnings = mapping_report.get("warnings")
+    if not isinstance(warnings, list) or not all(
+        isinstance(warning, str) for warning in warnings
+    ):
+        raise CsvMappingValidationError("mapping_report warnings must be a list")
+    return dict(mapping_report)
+
+
+def _mapped_source_headers(
+    field: str,
+    field_mapping: Mapping[str, Any],
+) -> list[str]:
+    if field == "availability":
+        source_headers = field_mapping.get("source_headers")
+        if not isinstance(source_headers, list) or not all(
+            isinstance(header, str) and header for header in source_headers
+        ):
+            raise CsvMappingValidationError(
+                "mapping_report field availability source_headers must be a list"
+            )
+        normalized_headers = field_mapping.get("normalized_headers")
+        if normalized_headers is not None and (
+            not isinstance(normalized_headers, list)
+            or len(normalized_headers) != len(source_headers)
+            or not all(isinstance(header, str) for header in normalized_headers)
+        ):
+            raise CsvMappingValidationError(
+                "mapping_report field availability normalized_headers are invalid"
+            )
+        return source_headers
+
+    source_header = field_mapping.get("source_header")
+    if not isinstance(source_header, str) or not source_header:
+        raise CsvMappingValidationError(
+            f"mapping_report field {field} source_header must be a string"
+        )
+    normalized_header = field_mapping.get("normalized_header")
+    if normalized_header is not None and not isinstance(normalized_header, str):
+        raise CsvMappingValidationError(
+            f"mapping_report field {field} normalized_header must be a string"
+        )
+    return [source_header]
 
 
 def _required_header_value(value: Any, headers: Sequence[str], field: str) -> str:
@@ -829,6 +1007,21 @@ def _apply_plan_warnings(
             "Compact availability must still match the expected day/shift matrix."
         )
     return warnings
+
+
+def _apply_plan_reason(
+    *,
+    missing_fields: Sequence[str],
+    unresolved_actions: Sequence[Mapping[str, Any]],
+    duplicate_targets: Sequence[str],
+) -> str:
+    if missing_fields:
+        return APPLY_REASON_MISSING_REQUIRED_FIELDS
+    if unresolved_actions:
+        return APPLY_REASON_REQUIRES_REVIEW
+    if duplicate_targets:
+        return APPLY_REASON_DUPLICATE_TARGET_HEADERS
+    return APPLY_REASON_READY
 
 
 def _duplicate_targets(column_renames: Sequence[Mapping[str, Any]]) -> list[str]:

@@ -71,8 +71,10 @@ day-name variants such as `Available Monday Morning`.
 `POST /csv/mapping/preview` returns a deterministic preview/apply plan for one
 dataset. Tests cover explicit mappings, inferred mappings, day-name
 availability headers that require review, invalid preview requests, JSON
-serializability, deterministic output, and the fact that preview calls do not
-change `/solve-csv` behavior.
+serializability, deterministic output, `can_apply=true` for complete plans,
+`can_apply=false` for plans that need review, stable `reason` codes,
+header-scoped adapter readiness metadata, supplied `mapping_report` validation,
+and the fact that preview calls do not change `/solve-csv` behavior.
 
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:

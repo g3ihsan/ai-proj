@@ -63,9 +63,13 @@ requests.
 `POST /csv/mapping/preview` exposes a deterministic single-dataset apply plan
 for proposed or inferred header mappings. It reports column rename actions,
 canonical headers after apply, missing fields, unmapped headers, and review
-warnings with `will_mutate_files=false` and `will_solve=false`; clients must
-still apply any file transformation outside the solver and then pass canonical
-CSV files through `csv_adapter.py`.
+warnings with `can_apply`, stable `reason` codes, header-scoped
+`adapter_readiness`, `will_mutate_files=false`, and `will_solve=false`. Only
+complete plans without unresolved review actions set `can_apply=true`; adapter
+readiness only means the previewed headers are ready after the described rename
+actions, not that row values have been parsed or validated. Clients must still
+apply any file transformation outside the solver and then pass canonical CSV
+files through `csv_adapter.py`.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.
