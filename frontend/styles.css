@@ -258,6 +258,19 @@ button:disabled {
   margin-top: 14px;
 }
 
+.preview-field-header {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.compact-button {
+  font-size: 12px;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
 .preview-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
