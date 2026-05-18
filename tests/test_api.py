@@ -471,6 +471,11 @@ def test_api_serves_static_roster_viewer() -> None:
     assert 'id="mapping-csv-type"' in response.text
     assert 'id="preview-export"' in response.text
     assert 'id="clear-mapping-wizard"' in response.text
+    assert "Load Sample" in response.text
+    assert "Suggest Mapping" in response.text
+    assert "Preview Mapping" in response.text
+    assert "Preview Rows" in response.text
+    assert "Preview Export" in response.text
     assert "Clear Wizard" in response.text
     assert 'data-tab="issues"' in response.text
     assert "./app.js" in response.text
