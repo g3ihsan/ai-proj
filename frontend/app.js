@@ -82,6 +82,8 @@ const missingCanonicalCsvPreviewMessages = {
   copy: "No canonical CSV export preview is available to copy.",
   download: "No canonical CSV export preview is available to download.",
 };
+const clipboardUnavailableMessage =
+  "Browser clipboard API is unavailable. Copy the canonical CSV text manually.";
 
 const state = {
   activeTab: "assignments",
@@ -737,6 +739,12 @@ async function copyCanonicalCsv() {
     logError("Canonical CSV copy unavailable", error);
     return;
   }
+  if (!navigator.clipboard || !navigator.clipboard.writeText) {
+    const error = clipboardUnavailableError();
+    setIssue(error, "unsupported");
+    logError("Canonical CSV clipboard unavailable", error);
+    return;
+  }
   try {
     await navigator.clipboard.writeText(state.canonicalCsvText);
     log("Canonical CSV copied.");
@@ -763,12 +771,21 @@ function downloadCanonicalCsv() {
 }
 
 function canonicalCsvDownloadFilename() {
-  return `canonical-${elements.mappingCsvType.value}-preview.csv`;
+  const safeCsvType =
+    elements.mappingCsvType.value.toLowerCase().replace(/[^a-z0-9-]+/g, "-") ||
+    "csv";
+  return `canonical-${safeCsvType}-preview.csv`;
 }
 
 function missingCanonicalCsvPreviewError(action) {
   const error = new Error(missingCanonicalCsvPreviewMessages[action]);
   error.type = "MissingCanonicalCsvPreview";
+  return error;
+}
+
+function clipboardUnavailableError() {
+  const error = new Error(clipboardUnavailableMessage);
+  error.type = "ClipboardUnavailable";
   return error;
 }
 

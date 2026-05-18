@@ -511,6 +511,10 @@ def test_api_serves_static_roster_viewer() -> None:
     assert "previewCanonicalExport" in app_js_response.text
     assert "copyCanonicalCsv" in app_js_response.text
     assert "downloadCanonicalCsv" in app_js_response.text
+    assert "clipboardUnavailableError" in app_js_response.text
+    assert "ClipboardUnavailable" in app_js_response.text
+    assert "Browser clipboard API is unavailable. Copy the canonical CSV text manually." in app_js_response.text
+    assert "Canonical CSV clipboard unavailable" in app_js_response.text
     assert "missingCanonicalCsvPreviewError" in app_js_response.text
     assert "MissingCanonicalCsvPreview" in app_js_response.text
     assert "No canonical CSV export preview is available to copy." in app_js_response.text
@@ -522,7 +526,7 @@ def test_api_serves_static_roster_viewer() -> None:
     assert "Canonical CSV copied." in app_js_response.text
     assert "Canonical CSV downloaded." in app_js_response.text
     assert "canonicalCsvDownloadFilename" in app_js_response.text
-    assert "canonical-${elements.mappingCsvType.value}-preview.csv" in app_js_response.text
+    assert "canonical-${safeCsvType}-preview.csv" in app_js_response.text
     assert "Will write files:" in app_js_response.text
     assert "Will mutate files:" in app_js_response.text
     assert "Will solve:" in app_js_response.text
