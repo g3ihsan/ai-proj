@@ -885,6 +885,72 @@ also has a row-level `status`: `ready` when that row has no preview errors, or
 availability matrices, and role values are still validated later by the strict
 CSV adapter.
 
+### `POST /csv/mapping/export/preview`
+
+Returns a deterministic in-memory canonical CSV export preview for one CSV
+dataset. This endpoint applies the same row transformation preview contract and
+then renders the previewed canonical headers and rows as CSV text. It does not
+write files, mutate uploads, parse rows through `csv_adapter.py`, run
+`/solve-csv`, run the solver, or call an external LLM/API.
+
+Request:
+
+```json
+{
+  "csv_type": "demand",
+  "headers": ["Day Index", "Shift Name", "Required Role", "Headcount"],
+  "rows": [["0", "morning", "worker", "2"]]
+}
+```
+
+`mapping`, `mapping_report`, or `apply_plan` may be supplied with the same rules
+as `POST /csv/mapping/rows/preview`.
+
+Response:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "type": "csv_canonical_export_preview",
+    "csv_mapping_contract_version": 1,
+    "status": "complete",
+    "csv_type": "demand",
+    "limits": {
+      "max_preview_rows": 20,
+      "row_limit_reached": false
+    },
+    "row_count": 1,
+    "previewed_row_count": 1,
+    "can_export": true,
+    "canonical_headers": ["day", "shift", "role", "required"],
+    "canonical_rows": [["0", "morning", "worker", "2"]],
+    "csv_text": "day,shift,role,required\n0,morning,worker,2\n",
+    "line_count": 2,
+    "row_preview": {
+      "type": "csv_row_transformation_preview"
+    },
+    "errors": [],
+    "warnings": [],
+    "row_shape_validated": true,
+    "row_data_validated": true,
+    "required_values_checked": true,
+    "row_semantics_validated": false,
+    "uses_external_llm": false,
+    "will_mutate_files": false,
+    "will_solve": false
+  }
+}
+```
+
+`can_export=true` only when the underlying row preview is complete, all previewed
+rows are ready, and no preview errors exist. Incomplete mappings or row-level
+preview errors still return deterministic `canonical_headers`, `canonical_rows`,
+and `csv_text` for inspection, but set `status=needs_review` and
+`can_export=false`. `row_semantics_validated=false` still means the strict CSV
+adapter remains responsible for parsing integers, booleans, roles, and
+availability semantics before anything can reach the solver.
+
 ### `POST /solve-csv`
 
 Accepts three uploaded CSV files, solves through the same canonical JSON

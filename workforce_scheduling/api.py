@@ -32,9 +32,11 @@ from .csv_mapper import (
     CSV_TYPE_SHIFTS,
     CsvMappingValidationError,
     MAX_PREVIEW_ROWS,
+    csv_canonical_export_preview,
     csv_row_transformation_preview,
     csv_mapping_preview,
     csv_mapping_report,
+    validate_export_preview_request,
     validate_row_preview_request,
 )
 from .explanations import (
@@ -188,6 +190,9 @@ async def metadata() -> dict[str, Any]:
             "csv_row_transformation_preview": (
                 "POST /csv/mapping/rows/preview"
             ),
+            "csv_canonical_export_preview": (
+                "POST /csv/mapping/export/preview"
+            ),
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -209,7 +214,9 @@ async def metadata() -> dict[str, Any]:
             "uses_external_llm": False,
             "response_shape": {
                 "ok": True,
-                "result": "CSV mapping report, preview, or row preview",
+                "result": (
+                    "CSV mapping report, preview, row preview, or export preview"
+                ),
             },
         },
         "solve_options": {
@@ -471,6 +478,32 @@ async def csv_row_transformation_preview_endpoint(request: Request) -> JSONRespo
     if _error_type(response_payload) == "RequestTooLargeError":
         status_code = 413
     _log_solve_route(request, "csv_row_transformation_preview", response_payload, status_code)
+    return JSONResponse(content=response_payload, status_code=status_code)
+
+
+@app.post("/csv/mapping/export/preview")
+async def csv_canonical_export_preview_endpoint(request: Request) -> JSONResponse:
+    try:
+        request_payload = await _json_request_payload(request)
+        response_payload = {
+            "ok": True,
+            "result": csv_canonical_export_preview(
+                **validate_export_preview_request(request_payload)
+            ),
+        }
+    except Exception as exc:
+        response_payload = _error_payload_for_request(exc, request)
+
+    response_payload = _with_request_id(response_payload, request)
+    status_code = 200 if response_payload["ok"] else 400
+    if _error_type(response_payload) == "RequestTooLargeError":
+        status_code = 413
+    _log_solve_route(
+        request,
+        "csv_canonical_export_preview",
+        response_payload,
+        status_code,
+    )
     return JSONResponse(content=response_payload, status_code=status_code)
 
 

@@ -83,6 +83,11 @@ required-value reporting for mapped canonical fields, row-level error
 attachment, the 20-row preview limit, JSON serializability, no file mutation,
 no solving, and `row_semantics_validated=false` because `csv_adapter.py`
 remains the strict parser.
+`POST /csv/mapping/export/preview` covers deterministic in-memory canonical CSV
+rendering from that row preview. Tests assert canonical headers, canonical row
+values, CSV quoting, deterministic output, row-error propagation,
+`can_export=false` for incomplete or invalid previews, JSON serializability, no
+file mutation, no solving, and `row_semantics_validated=false`.
 
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:
@@ -136,6 +141,9 @@ HTTP endpoints:
 - `POST /recommendations`
 - `POST /recommend/what-if`
 - `POST /csv/mapping/suggest`
+- `POST /csv/mapping/preview`
+- `POST /csv/mapping/rows/preview`
+- `POST /csv/mapping/export/preview`
 - `POST /solve-csv`
 - `POST /solve-jobs`
 - `GET /solve-jobs/{job_id}`

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import re
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -363,6 +365,105 @@ def validate_mapping(mapping_report: Mapping[str, Any]) -> dict[str, Any]:
             + ", ".join(str(field) for field in missing_fields)
         )
     return dict(mapping_report)
+
+
+def csv_canonical_export_preview(
+    *,
+    csv_type: str,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    mapping: Mapping[str, Any] | None = None,
+    mapping_report: Mapping[str, Any] | None = None,
+    apply_plan: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    row_preview = csv_row_transformation_preview(
+        csv_type=csv_type,
+        headers=headers,
+        rows=rows,
+        mapping=mapping,
+        mapping_report=mapping_report,
+        apply_plan=apply_plan,
+    )
+    canonical_headers = list(row_preview["transformed_headers"])
+    canonical_rows = canonical_csv_rows_from_preview(row_preview)
+    csv_text = build_canonical_csv_preview(
+        headers=canonical_headers,
+        rows=canonical_rows,
+    )
+    can_export = (
+        row_preview["status"] == "complete"
+        and row_preview["can_transform_rows"] is True
+        and not row_preview["errors"]
+    )
+    return {
+        "type": "csv_canonical_export_preview",
+        "csv_mapping_contract_version": CSV_MAPPING_CONTRACT_VERSION,
+        "status": "complete" if can_export else "needs_review",
+        "csv_type": row_preview["csv_type"],
+        "limits": dict(row_preview["limits"]),
+        "row_count": row_preview["row_count"],
+        "previewed_row_count": row_preview["previewed_row_count"],
+        "can_export": can_export,
+        "canonical_headers": canonical_headers,
+        "canonical_rows": canonical_rows,
+        "csv_text": csv_text,
+        "line_count": len(canonical_rows) + 1,
+        "row_preview": row_preview,
+        "errors": list(row_preview["errors"]),
+        "warnings": list(row_preview["warnings"]),
+        "row_shape_validated": row_preview["row_shape_validated"],
+        "row_data_validated": row_preview["row_data_validated"],
+        "required_values_checked": row_preview["required_values_checked"],
+        "row_semantics_validated": row_preview["row_semantics_validated"],
+        "uses_external_llm": False,
+        "will_mutate_files": False,
+        "will_solve": False,
+    }
+
+
+def build_canonical_csv_preview(
+    *,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+) -> str:
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(list(headers))
+    writer.writerows([list(row) for row in rows])
+    return output.getvalue()
+
+
+def canonical_csv_rows_from_preview(row_preview: Mapping[str, Any]) -> list[list[str]]:
+    if not isinstance(row_preview, Mapping):
+        raise CsvMappingValidationError("row preview must be an object")
+    transformed_rows = row_preview.get("transformed_rows")
+    if not isinstance(transformed_rows, list):
+        raise CsvMappingValidationError("row preview transformed_rows must be a list")
+    canonical_rows: list[list[str]] = []
+    for row_index, transformed_row in enumerate(transformed_rows):
+        if not isinstance(transformed_row, Mapping):
+            raise CsvMappingValidationError(
+                f"row preview transformed row {row_index} must be an object"
+            )
+        transformed_values = transformed_row.get("transformed_values")
+        if not isinstance(transformed_values, list) or not all(
+            isinstance(value, str) for value in transformed_values
+        ):
+            raise CsvMappingValidationError(
+                f"row preview transformed row {row_index} values are invalid"
+            )
+        canonical_rows.append(list(transformed_values))
+    return canonical_rows
+
+
+def validate_export_preview_request(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise CsvMappingValidationError("CSV export preview request must be an object")
+    try:
+        return validate_row_preview_request(payload)
+    except CsvMappingValidationError as exc:
+        message = str(exc).replace("CSV row preview request", "CSV export preview request")
+        raise CsvMappingValidationError(message) from exc
 
 
 def csv_row_transformation_preview(

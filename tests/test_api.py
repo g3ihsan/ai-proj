@@ -332,6 +332,9 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "csv_row_transformation_preview": (
                 "POST /csv/mapping/rows/preview"
             ),
+            "csv_canonical_export_preview": (
+                "POST /csv/mapping/export/preview"
+            ),
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -353,7 +356,9 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "uses_external_llm": False,
             "response_shape": {
                 "ok": True,
-                "result": "CSV mapping report, preview, or row preview",
+                "result": (
+                    "CSV mapping report, preview, row preview, or export preview"
+                ),
             },
         },
         "solve_options": {
@@ -1007,6 +1012,90 @@ def test_api_csv_row_transformation_preview_reports_required_value_errors() -> N
     assert result_payload["transformed_rows"][0]["status"] == "needs_review"
     assert result_payload["transformed_rows"][0]["errors"] == [expected_error]
     assert result_payload["row_semantics_validated"] is False
+
+
+def test_api_csv_canonical_export_preview_returns_deterministic_csv() -> None:
+    payload = {
+        "csv_type": "demand",
+        "headers": ["Day Index", "Shift Name", "Required Role", "Headcount"],
+        "rows": [["0", "morning", "worker", "2"]],
+    }
+
+    first = _api_request(
+        "POST",
+        "/csv/mapping/export/preview",
+        json_payload=payload,
+    )
+    second = _api_request(
+        "POST",
+        "/csv/mapping/export/preview",
+        json_payload=payload,
+    )
+    response_payload = first.json()
+    result_payload = response_payload["result"]
+
+    assert first.status_code == 200
+    assert response_payload["ok"] is True
+    assert first.json() == second.json()
+    assert result_payload["type"] == "csv_canonical_export_preview"
+    assert result_payload["status"] == "complete"
+    assert result_payload["can_export"] is True
+    assert result_payload["canonical_headers"] == ["day", "shift", "role", "required"]
+    assert result_payload["canonical_rows"] == [["0", "morning", "worker", "2"]]
+    assert result_payload["csv_text"] == "day,shift,role,required\n0,morning,worker,2\n"
+    assert result_payload["line_count"] == 2
+    assert result_payload["row_preview"]["type"] == "csv_row_transformation_preview"
+    assert result_payload["row_semantics_validated"] is False
+    assert result_payload["will_mutate_files"] is False
+    assert result_payload["will_solve"] is False
+    assert result_payload["errors"] == []
+    json.dumps(response_payload, sort_keys=True)
+
+
+def test_api_csv_canonical_export_preview_reports_row_errors() -> None:
+    response = _api_request(
+        "POST",
+        "/csv/mapping/export/preview",
+        json_payload={
+            "csv_type": "demand",
+            "headers": ["Day", "Shift", "Role", "Required"],
+            "rows": [["0", "morning", "", "2"]],
+        },
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+    expected_error = {
+        "row_index": 0,
+        "type": "missing_required_value",
+        "field": "role",
+        "target_header": "role",
+        "message": "Row 0 missing required value for role",
+    }
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["status"] == "needs_review"
+    assert result_payload["can_export"] is False
+    assert result_payload["csv_text"] == "day,shift,role,required\n0,morning,,2\n"
+    assert result_payload["errors"] == [expected_error]
+    assert result_payload["row_preview"]["errors"] == [expected_error]
+
+
+def test_api_csv_canonical_export_preview_rejects_invalid_request() -> None:
+    response = _api_request(
+        "POST",
+        "/csv/mapping/export/preview",
+        json_payload={"csv_type": "demand", "headers": ["Day"]},
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"] == {
+        "type": "CsvMappingValidationError",
+        "message": "CSV export preview request must include rows",
+        "request_id": response.headers["x-request-id"],
+    }
 
 
 @pytest.mark.parametrize(

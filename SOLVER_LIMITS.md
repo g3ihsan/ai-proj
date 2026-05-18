@@ -77,6 +77,11 @@ columns with row-level `ready` or `needs_review` status, returns
 `row_semantics_validated=false`, does not write files, does not call
 `/solve-csv`, and does not parse rows into `ProblemData`; the strict CSV
 adapter remains the only path into the solver.
+`POST /csv/mapping/export/preview` renders those previewed canonical headers and
+rows as in-memory CSV text only. It uses the same 20-row preview limit, reports
+`can_export=false` when the mapping or rows need review, does not write files,
+does not call `/solve-csv`, and does not parse rows into `ProblemData`; the
+strict CSV adapter remains the only path into the solver.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.
@@ -205,8 +210,10 @@ preserves the same solved roster and objective values.
 `workforce_scheduling.api` is a thin FastAPI wrapper over `solve_payload(...)`.
 It exposes `GET /health`, `GET /metadata`, `POST /solve`, deterministic
 `POST /explain/*` endpoints, `POST /explain/narrate`, `POST /assistant/ask`,
-`POST /csv/mapping/suggest`, `POST /solve-csv`, `POST /solve-jobs`,
-`GET /solve-jobs/{job_id}`, and the static `GET /viewer/` roster viewer. The
+`POST /csv/mapping/suggest`, `POST /csv/mapping/preview`,
+`POST /csv/mapping/rows/preview`, `POST /csv/mapping/export/preview`,
+`POST /solve-csv`, `POST /solve-jobs`, `GET /solve-jobs/{job_id}`, and the
+static `GET /viewer/` roster viewer. The
 explanation endpoints format existing Solver Evidence Layer fields into
 manager-readable JSON payloads. They are not LLM endpoints and do not generate
 or modify schedules. The narration endpoint formats an existing deterministic

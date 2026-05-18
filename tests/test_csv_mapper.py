@@ -9,6 +9,9 @@ from workforce_scheduling.csv_mapper import (
     CsvMappingValidationError,
     MAX_PREVIEW_ROWS,
     build_apply_plan,
+    build_canonical_csv_preview,
+    canonical_csv_rows_from_preview,
+    csv_canonical_export_preview,
     csv_mapping_report,
     csv_mapping_preview,
     csv_row_transformation_preview,
@@ -21,6 +24,7 @@ from workforce_scheduling.csv_mapper import (
     suggest_shift_column_mapping,
     transform_row_with_apply_plan,
     validate_apply_plan,
+    validate_export_preview_request,
     validate_mapping,
     validate_row_preview_request,
 )
@@ -811,6 +815,127 @@ def test_transform_row_with_apply_plan_reports_duplicate_targets() -> None:
     ]
     assert transformed["status"] == "needs_review"
     assert rows == [transformed]
+
+
+def test_csv_canonical_export_preview_builds_in_memory_csv() -> None:
+    headers = ["Day Index", "Shift Name", "Required Role", "Headcount"]
+    rows = [["0", "morning", "worker", "2"]]
+
+    preview = csv_canonical_export_preview(
+        csv_type="demand",
+        headers=headers,
+        rows=rows,
+    )
+
+    assert preview["type"] == "csv_canonical_export_preview"
+    assert preview["status"] == "complete"
+    assert preview["csv_type"] == "demand"
+    assert preview["can_export"] is True
+    assert preview["canonical_headers"] == ["day", "shift", "role", "required"]
+    assert preview["canonical_rows"] == [["0", "morning", "worker", "2"]]
+    assert preview["csv_text"] == "day,shift,role,required\n0,morning,worker,2\n"
+    assert preview["line_count"] == 2
+    assert preview["row_count"] == 1
+    assert preview["previewed_row_count"] == 1
+    assert preview["row_shape_validated"] is True
+    assert preview["row_data_validated"] is True
+    assert preview["required_values_checked"] is True
+    assert preview["row_semantics_validated"] is False
+    assert preview["uses_external_llm"] is False
+    assert preview["will_mutate_files"] is False
+    assert preview["will_solve"] is False
+    assert preview["errors"] == []
+    assert preview["row_preview"]["type"] == "csv_row_transformation_preview"
+    assert preview["row_preview"]["status"] == "complete"
+    json.dumps(preview, sort_keys=True)
+    assert headers == ["Day Index", "Shift Name", "Required Role", "Headcount"]
+    assert rows == [["0", "morning", "worker", "2"]]
+
+
+def test_csv_canonical_export_preview_marks_incomplete_mapping_needs_review() -> None:
+    preview = csv_canonical_export_preview(
+        csv_type="employees",
+        headers=["Staff ID", "Full Name", "Skills", "Cost Per Hour"],
+        rows=[["E1", "Asha", "worker|supervisor", "20"]],
+        mapping={
+            "employee_id": "Staff ID",
+            "name": "Full Name",
+            "roles": "Skills",
+            "hourly_cost": "Cost Per Hour",
+        },
+    )
+
+    assert preview["status"] == "needs_review"
+    assert preview["can_export"] is False
+    assert preview["canonical_headers"] == [
+        "employee_id",
+        "name",
+        "roles",
+        "hourly_cost",
+    ]
+    assert preview["canonical_rows"] == [["E1", "Asha", "worker|supervisor", "20"]]
+    assert preview["csv_text"] == (
+        "employee_id,name,roles,hourly_cost\n"
+        "E1,Asha,worker|supervisor,20\n"
+    )
+    assert preview["row_preview"]["apply_plan"]["reason"] == (
+        "missing_required_fields"
+    )
+    assert preview["errors"] == []
+
+
+def test_csv_canonical_export_preview_attaches_row_errors() -> None:
+    preview = csv_canonical_export_preview(
+        csv_type="demand",
+        headers=["Day", "Shift", "Role", "Required"],
+        rows=[["0", "morning", "", "2"]],
+    )
+    expected_error = {
+        "row_index": 0,
+        "type": "missing_required_value",
+        "field": "role",
+        "target_header": "role",
+        "message": "Row 0 missing required value for role",
+    }
+
+    assert preview["status"] == "needs_review"
+    assert preview["can_export"] is False
+    assert preview["canonical_rows"] == [["0", "morning", "", "2"]]
+    assert preview["csv_text"] == "day,shift,role,required\n0,morning,,2\n"
+    assert preview["errors"] == [expected_error]
+    assert preview["row_preview"]["transformed_rows"][0]["status"] == "needs_review"
+    assert preview["row_preview"]["transformed_rows"][0]["errors"] == [expected_error]
+
+
+def test_canonical_csv_rows_from_preview_validates_shape() -> None:
+    with pytest.raises(
+        CsvMappingValidationError,
+        match="transformed_rows must be a list",
+    ):
+        canonical_csv_rows_from_preview({})
+
+    with pytest.raises(CsvMappingValidationError, match="values are invalid"):
+        canonical_csv_rows_from_preview(
+            {"transformed_rows": [{"transformed_values": [1]}]}
+        )
+
+
+def test_build_canonical_csv_preview_quotes_values_deterministically() -> None:
+    csv_text = build_canonical_csv_preview(
+        headers=["name", "roles"],
+        rows=[["Asha, Lead", "worker|supervisor"]],
+    )
+
+    assert csv_text == 'name,roles\n"Asha, Lead",worker|supervisor\n'
+
+
+def test_validate_export_preview_request_rejects_invalid_payload() -> None:
+    with pytest.raises(CsvMappingValidationError, match="must be an object"):
+        validate_export_preview_request([])  # type: ignore[arg-type]
+    with pytest.raises(CsvMappingValidationError, match="must include rows"):
+        validate_export_preview_request(
+            {"csv_type": "demand", "headers": ["Day"]}
+        )
 
 
 def test_validate_row_preview_request_rejects_invalid_payload() -> None:
