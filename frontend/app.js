@@ -592,6 +592,16 @@ function clearMappingWizard() {
   log("CSV mapping wizard cleared.");
 }
 
+function validateMappingHeaders(headers) {
+  const emptyHeaderIndex = headers.findIndex((header) => header.trim() === "");
+  if (emptyHeaderIndex !== -1) {
+    throw new Error(
+      `CSV mapping wizard header ${emptyHeaderIndex + 1} is empty. Name every header cell before previewing.`,
+    );
+  }
+  return headers;
+}
+
 function mappingHeadersFromInput() {
   const records = parseCsvRecords(elements.mappingHeaders.value).filter((row) =>
     row.some((cell) => cell.trim() !== ""),
@@ -600,7 +610,7 @@ function mappingHeadersFromInput() {
   if (!headers.length) {
     throw new Error("CSV mapping wizard requires at least one header.");
   }
-  return headers;
+  return validateMappingHeaders(headers);
 }
 
 function mappingRowsFromInput() {

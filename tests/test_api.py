@@ -497,6 +497,8 @@ def test_api_serves_static_roster_viewer() -> None:
     assert "Response mode update failed" in app_js_response.text
     assert "suggestCsvMapping" in app_js_response.text
     assert "clearMappingWizard" in app_js_response.text
+    assert "validateMappingHeaders" in app_js_response.text
+    assert "Name every header cell before previewing." in app_js_response.text
     assert "previewCanonicalExport" in app_js_response.text
     assert 'metricCard("Can export", canExport)' in app_js_response.text
     assert 'metricCard("Reason", reason)' in app_js_response.text

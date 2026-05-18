@@ -21,4 +21,5 @@ behavior.
 The CSV Mapping Wizard is a preview-only workflow. It can request mapping
 suggestions, apply-plan previews, sample row transformations, and canonical CSV
 export text from the backend. It does not write files, does not call
-`/solve-csv`, and does not submit mapped CSVs to the solver.
+`/solve-csv`, and does not submit mapped CSVs to the solver. Empty header cells
+are rejected in the viewer before a mapping preview request is sent.
