@@ -10,11 +10,13 @@ thin boundaries:
 - optional narration: `workforce_scheduling.ai_explanations`
 - deterministic assistant routing: `workforce_scheduling.assistant`
 - deterministic scenario recommendations: `workforce_scheduling.recommendations`
+- deterministic demand forecasting baseline: `workforce_scheduling.forecasting`
 
 The solver remains the source of truth. API, job, and CSV surfaces must not add
 solver objectives, constraints, persistence, or alternate scheduling behavior.
 Recommendations are grounded in scenario solves that reuse the same CP-SAT
-solver; they are not LLM guesses.
+solver; they are not LLM guesses. Forecasting is planning support only: it does
+not change solver demand, assignments, objectives, or constraints.
 
 ## Versioning
 
@@ -959,6 +961,89 @@ text in the response.
 `row_semantics_validated=false` still means the strict CSV adapter remains
 responsible for parsing integers, booleans, roles, and availability semantics
 before anything can reach the solver.
+
+### `POST /forecast/demand`
+
+Returns a deterministic baseline forecast from historical demand records. This
+endpoint does not call external ML/LLM services, does not write files, does not
+call `/solve-csv`, does not run the solver, and does not mutate a solve request.
+Forecast output is demand-planning evidence only.
+
+Request:
+
+```json
+{
+  "method": "historical_average",
+  "historical_demand": [
+    {"period": 0, "day": 0, "shift": 0, "role": "worker", "required": 2},
+    {"period": 1, "day": 0, "shift": 0, "role": "worker", "required": 4}
+  ],
+  "horizon": {
+    "days": [0],
+    "shifts": [0],
+    "roles": ["worker"]
+  }
+}
+```
+
+`historical_demand` records use the solver's demand dimensions
+`day`, `shift`, `role`, and `required`, plus a non-negative integer `period`
+that identifies the historical planning window. The initial supported method is
+`historical_average`. If `horizon` is omitted, the endpoint forecasts the
+observed historical days, shifts, and roles. Horizon slots with no matching
+history forecast `required=0` and are reported in diagnostics instead of
+inventing demand.
+
+Response:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "type": "demand_forecast",
+    "forecast_contract_version": 1,
+    "method": "historical_average",
+    "source": "deterministic_historical_demand_baseline",
+    "uses_external_ml": false,
+    "uses_external_llm": false,
+    "will_solve": false,
+    "will_mutate_solver_request": false,
+    "will_write_files": false,
+    "historical_record_count": 2,
+    "historical_period_count": 2,
+    "horizon": {"days": [0], "shifts": [0], "roles": ["worker"]},
+    "forecast": [
+      {
+        "day": 0,
+        "shift": 0,
+        "role": "worker",
+        "required": 3,
+        "mean_required": 3.0,
+        "observation_count": 2,
+        "historical_values": [2, 4]
+      }
+    ],
+    "diagnostics": {
+      "baseline_window_periods": [0, 1],
+      "missing_history_slots": [],
+      "missing_history_slot_count": 0,
+      "notes": [
+        "Deterministic historical average baseline; this forecast does not change solver demand or assignments."
+      ]
+    },
+    "metrics": {
+      "forecast_slot_count": 1,
+      "total_forecast_required": 3,
+      "mean_forecast_required": 3.0,
+      "min_forecast_required": 3,
+      "max_forecast_required": 3,
+      "total_historical_required": 6
+    }
+  }
+}
+```
+
+Malformed forecast requests return `ForecastValidationError` with HTTP 400.
 
 ### `POST /solve-csv`
 

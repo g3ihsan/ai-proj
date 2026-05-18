@@ -335,6 +335,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "csv_canonical_export_preview": (
                 "POST /csv/mapping/export/preview"
             ),
+            "forecast_demand": "POST /forecast/demand",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -359,6 +360,20 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
                 "result": (
                     "CSV mapping report, preview, row preview, or export preview"
                 ),
+            },
+        },
+        "forecasting": {
+            "source": "Deterministic historical demand baseline",
+            "forecast_contract_version": 1,
+            "default_method": "historical_average",
+            "supported_methods": ["historical_average"],
+            "uses_external_ml": False,
+            "uses_external_llm": False,
+            "will_solve": False,
+            "will_mutate_solver_request": False,
+            "response_shape": {
+                "ok": True,
+                "result": "Demand forecast payload",
             },
         },
         "solve_options": {
@@ -550,6 +565,81 @@ def test_api_serves_static_roster_viewer() -> None:
     assert ".compact-actions" in styles_response.text
     assert ".export-safety-flags" in styles_response.text
     assert ".preview-box" in styles_response.text
+
+
+def test_api_forecast_demand_returns_deterministic_baseline() -> None:
+    payload = {
+        "historical_demand": [
+            {"period": 0, "day": 0, "shift": 0, "role": "worker", "required": 2},
+            {"period": 1, "day": 0, "shift": 0, "role": "worker", "required": 4},
+            {"period": 0, "day": 0, "shift": 1, "role": "worker", "required": 1},
+            {"period": 1, "day": 0, "shift": 1, "role": "worker", "required": 3},
+        ],
+        "horizon": {"days": [0], "shifts": [0, 1], "roles": ["worker"]},
+    }
+
+    response = _api_request("POST", "/forecast/demand", json_payload=payload)
+    second_response = _api_request("POST", "/forecast/demand", json_payload=payload)
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"]
+    assert response.json()["result"] == second_response.json()["result"]
+    envelope = response.json()
+    assert envelope["ok"] is True
+    result_payload = envelope["result"]
+    assert result_payload["type"] == "demand_forecast"
+    assert result_payload["forecast_contract_version"] == 1
+    assert result_payload["method"] == "historical_average"
+    assert result_payload["uses_external_ml"] is False
+    assert result_payload["uses_external_llm"] is False
+    assert result_payload["will_solve"] is False
+    assert result_payload["will_mutate_solver_request"] is False
+    assert result_payload["forecast"] == [
+        {
+            "day": 0,
+            "shift": 0,
+            "role": "worker",
+            "required": 3,
+            "mean_required": 3.0,
+            "observation_count": 2,
+            "historical_values": [2, 4],
+        },
+        {
+            "day": 0,
+            "shift": 1,
+            "role": "worker",
+            "required": 2,
+            "mean_required": 2.0,
+            "observation_count": 2,
+            "historical_values": [1, 3],
+        },
+    ]
+    assert result_payload["metrics"]["total_forecast_required"] == 5
+
+
+def test_api_forecast_demand_rejects_invalid_history() -> None:
+    response = _api_request(
+        "POST",
+        "/forecast/demand",
+        json_payload={
+            "historical_demand": [
+                {
+                    "period": 0,
+                    "day": 0,
+                    "shift": 0,
+                    "role": "worker",
+                    "required": True,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["type"] == "ForecastValidationError"
+    assert "historical_demand[0].required must be an integer" in payload["error"]["message"]
+    assert payload["error"]["request_id"]
 
 
 def test_api_csv_mapping_suggest_returns_deterministic_report() -> None:

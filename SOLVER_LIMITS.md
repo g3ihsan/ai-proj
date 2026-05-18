@@ -83,6 +83,12 @@ rows as in-memory CSV text only. It uses the same 20-row preview limit, reports
 need review, returns `will_write_files=false`, does not write files, does not
 call `/solve-csv`, and does not parse rows into `ProblemData`; the strict CSV
 adapter remains the only path into the solver.
+`POST /forecast/demand` is a deterministic planning endpoint only. It averages
+historical demand records by `day`, `shift`, and `role` across historical
+`period` values, returns diagnostics and metrics, uses no external ML/LLM, does
+not run the solver, does not call `/solve-csv`, and does not mutate canonical
+solve requests. Missing horizon slots default to forecast demand `0` and are
+reported in diagnostics rather than invented.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.

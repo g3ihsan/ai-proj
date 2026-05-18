@@ -91,6 +91,14 @@ output, row-error propagation, stable `export_ready_reason` values,
 JSON serializability, no file mutation, no solving, and
 `row_semantics_validated=false`.
 
+`POST /forecast/demand` covers the deterministic demand forecasting foundation.
+Tests assert strict historical demand validation, no bool-as-int acceptance,
+duplicate historical slot rejection, deterministic historical-average forecasts,
+missing-horizon-slot diagnostics, JSON serializability, `uses_external_ml=false`,
+`uses_external_llm=false`, `will_solve=false`, and
+`will_mutate_solver_request=false`. Forecasts are planning evidence only and do
+not call `/solve`, `/solve-csv`, or mutate canonical solve requests.
+
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:
 `0`, `1`, `2`, and so on. Global solver settings are not read from
@@ -146,6 +154,7 @@ HTTP endpoints:
 - `POST /csv/mapping/preview`
 - `POST /csv/mapping/rows/preview`
 - `POST /csv/mapping/export/preview`
+- `POST /forecast/demand`
 - `POST /solve-csv`
 - `POST /solve-jobs`
 - `GET /solve-jobs/{job_id}`
