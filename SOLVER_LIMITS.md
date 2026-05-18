@@ -73,8 +73,9 @@ files through `csv_adapter.py`.
 `POST /csv/mapping/rows/preview` transforms supplied sample rows in memory for
 inspection only. It accepts at most 20 sample rows per request, validates row
 shape and string cells, reports blank required values for mapped canonical
-columns, returns `row_semantics_validated=false`, does not write files, does not
-call `/solve-csv`, and does not parse rows into `ProblemData`; the strict CSV
+columns with row-level `ready` or `needs_review` status, returns
+`row_semantics_validated=false`, does not write files, does not call
+`/solve-csv`, and does not parse rows into `ProblemData`; the strict CSV
 adapter remains the only path into the solver.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect

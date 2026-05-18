@@ -18,6 +18,8 @@ APPLY_REASON_READY = "ready"
 APPLY_REASON_MISSING_REQUIRED_FIELDS = "missing_required_fields"
 APPLY_REASON_REQUIRES_REVIEW = "requires_review"
 APPLY_REASON_DUPLICATE_TARGET_HEADERS = "duplicate_target_headers"
+ROW_STATUS_READY = "ready"
+ROW_STATUS_NEEDS_REVIEW = "needs_review"
 DAY_NAME_TOKENS = {
     "mon",
     "monday",
@@ -386,17 +388,20 @@ def csv_row_transformation_preview(
         rows=rows,
         apply_plan=apply_plan_payload,
     )
-    transformation_errors = [
-        error
-        for transformed_row in transformed_rows
-        for error in transformed_row["errors"]
-    ]
     required_value_errors = _required_value_errors(
         csv_type=csv_type,
         apply_plan=apply_plan_payload,
         transformed_rows=transformed_rows,
     )
-    row_errors = [*transformation_errors, *required_value_errors]
+    transformed_rows = _attach_row_preview_errors(
+        transformed_rows=transformed_rows,
+        additional_errors=required_value_errors,
+    )
+    row_errors = [
+        error
+        for transformed_row in transformed_rows
+        for error in transformed_row["errors"]
+    ]
     unresolved_actions = [
         action
         for action in apply_plan_payload["column_renames"]
@@ -497,6 +502,7 @@ def transform_row_with_apply_plan(
     ]
     return {
         "row_index": row_index,
+        "status": _row_status(errors),
         "source": source,
         "transformed": transformed,
         "transformed_values": transformed_values,
@@ -894,6 +900,34 @@ def _required_value_errors(
                     }
                 )
     return errors
+
+
+def _attach_row_preview_errors(
+    *,
+    transformed_rows: Sequence[Mapping[str, Any]],
+    additional_errors: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    errors_by_row_index: dict[int, list[dict[str, Any]]] = {}
+    for error in additional_errors:
+        row_index = error.get("row_index")
+        if isinstance(row_index, int):
+            errors_by_row_index.setdefault(row_index, []).append(dict(error))
+
+    rows_with_errors: list[dict[str, Any]] = []
+    for transformed_row in transformed_rows:
+        row = dict(transformed_row)
+        row_errors = [
+            *[dict(error) for error in row["errors"]],
+            *errors_by_row_index.get(row["row_index"], []),
+        ]
+        row["errors"] = row_errors
+        row["status"] = _row_status(row_errors)
+        rows_with_errors.append(row)
+    return rows_with_errors
+
+
+def _row_status(errors: Sequence[Mapping[str, Any]]) -> str:
+    return ROW_STATUS_NEEDS_REVIEW if errors else ROW_STATUS_READY
 
 
 def _required_value_headers_for_apply_plan(

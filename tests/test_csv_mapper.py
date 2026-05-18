@@ -589,6 +589,7 @@ def test_csv_row_transformation_preview_maps_sample_rows_without_solving() -> No
     ]
     assert preview["transformed_rows"][0] == {
         "row_index": 0,
+        "status": "ready",
         "source": {
             "Staff ID": "E1",
             "Full Name": "Asha",
@@ -604,6 +605,8 @@ def test_csv_row_transformation_preview_maps_sample_rows_without_solving() -> No
         "transformed_values": ["E1", "Asha", "worker|supervisor", "20"],
         "errors": [],
     }
+    assert preview["transformed_rows"][1]["status"] == "ready"
+    assert preview["transformed_rows"][1]["errors"] == []
     assert preview["errors"] == []
     json.dumps(preview, sort_keys=True)
     assert headers == ["Staff ID", "Full Name", "Skills", "Cost Per Hour"]
@@ -635,6 +638,8 @@ def test_csv_row_transformation_preview_uses_valid_apply_plan() -> None:
         "role": "worker",
         "required": "2",
     }
+    assert preview["transformed_rows"][0]["status"] == "ready"
+    assert preview["transformed_rows"][0]["errors"] == []
     assert preview["row_shape_validated"] is True
     assert preview["required_values_checked"] is True
     assert preview["required_value_errors"] == []
@@ -644,7 +649,10 @@ def test_csv_row_transformation_preview_reports_blank_required_values() -> None:
     preview = csv_row_transformation_preview(
         csv_type="demand",
         headers=["Day", "Shift", "Role", "Required"],
-        rows=[["0", "morning", " ", "2"]],
+        rows=[
+            ["0", "morning", " ", "2"],
+            ["1", "evening", "supervisor", "1"],
+        ],
     )
 
     expected_error = {
@@ -661,6 +669,10 @@ def test_csv_row_transformation_preview_reports_blank_required_values() -> None:
     assert preview["required_values_checked"] is True
     assert preview["required_value_errors"] == [expected_error]
     assert preview["errors"] == [expected_error]
+    assert preview["transformed_rows"][0]["status"] == "needs_review"
+    assert preview["transformed_rows"][0]["errors"] == [expected_error]
+    assert preview["transformed_rows"][1]["status"] == "ready"
+    assert preview["transformed_rows"][1]["errors"] == []
     assert preview["row_semantics_validated"] is False
 
 
@@ -691,6 +703,8 @@ def test_csv_row_transformation_preview_reports_blank_availability_values() -> N
     assert preview["row_shape_validated"] is True
     assert preview["required_value_errors"] == [expected_error]
     assert preview["errors"] == [expected_error]
+    assert preview["transformed_rows"][0]["status"] == "needs_review"
+    assert preview["transformed_rows"][0]["errors"] == [expected_error]
 
 
 def test_csv_row_transformation_preview_marks_review_required_availability() -> None:
@@ -714,6 +728,8 @@ def test_csv_row_transformation_preview_marks_review_required_availability() -> 
     assert preview["transformed_rows"][0]["transformed"][
         "Available Monday Morning"
     ] == "yes"
+    assert preview["transformed_rows"][0]["status"] == "ready"
+    assert preview["transformed_rows"][0]["errors"] == []
 
 
 def test_csv_row_transformation_preview_rejects_invalid_rows() -> None:
@@ -793,6 +809,7 @@ def test_transform_row_with_apply_plan_reports_duplicate_targets() -> None:
             "message": "Row 0 maps more than one source column to available_day0_shift0",
         }
     ]
+    assert transformed["status"] == "needs_review"
     assert rows == [transformed]
 
 

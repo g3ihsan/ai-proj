@@ -928,6 +928,10 @@ def test_api_csv_row_transformation_preview_returns_deterministic_rows() -> None
         "roles": "worker|supervisor",
         "hourly_cost": "20",
     }
+    assert result_payload["transformed_rows"][0]["status"] == "ready"
+    assert result_payload["transformed_rows"][0]["errors"] == []
+    assert result_payload["transformed_rows"][1]["status"] == "ready"
+    assert result_payload["transformed_rows"][1]["errors"] == []
     assert result_payload["errors"] == []
     json.dumps(response_payload, sort_keys=True)
 
@@ -964,6 +968,8 @@ def test_api_csv_row_transformation_preview_accepts_apply_plan() -> None:
         "role": "worker",
         "required": "2",
     }
+    assert result_payload["transformed_rows"][0]["status"] == "ready"
+    assert result_payload["transformed_rows"][0]["errors"] == []
     assert result_payload["row_shape_validated"] is True
     assert result_payload["required_values_checked"] is True
     assert result_payload["required_value_errors"] == []
@@ -998,6 +1004,8 @@ def test_api_csv_row_transformation_preview_reports_required_value_errors() -> N
     assert result_payload["required_values_checked"] is True
     assert result_payload["required_value_errors"] == [expected_error]
     assert result_payload["errors"] == [expected_error]
+    assert result_payload["transformed_rows"][0]["status"] == "needs_review"
+    assert result_payload["transformed_rows"][0]["errors"] == [expected_error]
     assert result_payload["row_semantics_validated"] is False
 
 

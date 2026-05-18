@@ -849,6 +849,7 @@ Response:
     "transformed_rows": [
       {
         "row_index": 0,
+        "status": "ready",
         "source": {
           "Staff ID": "E1",
           "Full Name": "Asha",
@@ -876,10 +877,13 @@ same width as `headers`. `row_shape_validated=true` means every previewed row
 has the same column count as `headers` and contains only strings. Row preview
 also performs lightweight required-value checks for mapped canonical columns and
 explicit availability columns; blank required values are reported in both
-`required_value_errors` and the top-level `errors` list and keep
-`status=needs_review`. `row_semantics_validated=false` means integer fields,
-booleans, compact availability matrices, and role values are still validated
-later by the strict CSV adapter.
+`required_value_errors` and the top-level `errors` list, are attached to the
+affected transformed row, and keep `status=needs_review`. Each transformed row
+also has a row-level `status`: `ready` when that row has no preview errors, or
+`needs_review` when row-specific errors are present.
+`row_semantics_validated=false` means integer fields, booleans, compact
+availability matrices, and role values are still validated later by the strict
+CSV adapter.
 
 ### `POST /solve-csv`
 
