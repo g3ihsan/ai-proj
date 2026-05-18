@@ -511,6 +511,12 @@ def test_api_serves_static_roster_viewer() -> None:
     assert "previewCanonicalExport" in app_js_response.text
     assert "copyCanonicalCsv" in app_js_response.text
     assert "downloadCanonicalCsv" in app_js_response.text
+    assert "missingCanonicalCsvPreviewError" in app_js_response.text
+    assert "MissingCanonicalCsvPreview" in app_js_response.text
+    assert "No canonical CSV export preview is available to copy." in app_js_response.text
+    assert "No canonical CSV export preview is available to download." in app_js_response.text
+    assert "Canonical CSV copy unavailable" in app_js_response.text
+    assert "Canonical CSV download unavailable" in app_js_response.text
     assert "setExportSafetyFlags" in app_js_response.text
     assert "navigator.clipboard.writeText" in app_js_response.text
     assert "Canonical CSV copied." in app_js_response.text

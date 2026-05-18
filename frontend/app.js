@@ -78,6 +78,10 @@ const mappingSamples = {
 
 const exportPreviewEmptyState =
   "No canonical CSV export preview yet. Use Preview Export after headers, rows, and mapping are ready.";
+const missingCanonicalCsvPreviewMessages = {
+  copy: "No canonical CSV export preview is available to copy.",
+  download: "No canonical CSV export preview is available to download.",
+};
 
 const state = {
   activeTab: "assignments",
@@ -183,8 +187,8 @@ function setBusy(isBusy, statusText = "") {
 }
 
 function updateCanonicalCsvActions() {
-  elements.copyCanonicalCsv.disabled = state.isBusy || !state.canonicalCsvText;
-  elements.downloadCanonicalCsv.disabled = state.isBusy || !state.canonicalCsvText;
+  elements.copyCanonicalCsv.disabled = state.isBusy;
+  elements.downloadCanonicalCsv.disabled = state.isBusy;
 }
 
 async function withBusy(statusText, operation) {
@@ -728,7 +732,9 @@ function renderMappingResult(label, payload) {
 
 async function copyCanonicalCsv() {
   if (!state.canonicalCsvText) {
-    log("No canonical CSV export preview to copy.");
+    const error = missingCanonicalCsvPreviewError("copy");
+    setIssue(error, "missing_input");
+    logError("Canonical CSV copy unavailable", error);
     return;
   }
   try {
@@ -741,7 +747,9 @@ async function copyCanonicalCsv() {
 
 function downloadCanonicalCsv() {
   if (!state.canonicalCsvText) {
-    log("No canonical CSV export preview to download.");
+    const error = missingCanonicalCsvPreviewError("download");
+    setIssue(error, "missing_input");
+    logError("Canonical CSV download unavailable", error);
     return;
   }
   const blob = new Blob([state.canonicalCsvText], { type: "text/csv" });
@@ -756,6 +764,12 @@ function downloadCanonicalCsv() {
 
 function canonicalCsvDownloadFilename() {
   return `canonical-${elements.mappingCsvType.value}-preview.csv`;
+}
+
+function missingCanonicalCsvPreviewError(action) {
+  const error = new Error(missingCanonicalCsvPreviewMessages[action]);
+  error.type = "MissingCanonicalCsvPreview";
+  return error;
 }
 
 async function postJson(path, payload) {

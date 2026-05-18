@@ -29,4 +29,5 @@ download action also runs in the browser and uses the same in-memory preview
 text with deterministic `canonical-{csv_type}-preview.csv` filenames; it does
 not write files on the backend. Export safety flags show whether the preview
 would write files, mutate files, solve, use an external LLM, or validate row
-semantics.
+semantics. Copy or download attempts before an export preview exists are shown
+as local Issues and do not call the backend.
