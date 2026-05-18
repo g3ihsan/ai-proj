@@ -110,6 +110,7 @@ const elements = {
   mappingJson: document.querySelector("#mapping-json"),
   loadMappingSample: document.querySelector("#load-mapping-sample"),
   suggestMapping: document.querySelector("#suggest-mapping"),
+  clearMappingWizard: document.querySelector("#clear-mapping-wizard"),
   previewApplyPlan: document.querySelector("#preview-apply-plan"),
   previewRowTransform: document.querySelector("#preview-row-transform"),
   previewExport: document.querySelector("#preview-export"),
@@ -159,6 +160,7 @@ function setBusy(isBusy, statusText = "") {
     elements.submitJob,
     elements.loadMappingSample,
     elements.suggestMapping,
+    elements.clearMappingWizard,
     elements.previewApplyPlan,
     elements.previewRowTransform,
     elements.previewExport,
@@ -580,6 +582,16 @@ function loadMappingSample() {
   log("CSV mapping sample loaded", { csv_type: elements.mappingCsvType.value });
 }
 
+function clearMappingWizard() {
+  elements.mappingHeaders.value = "";
+  elements.mappingRows.value = "";
+  elements.mappingJson.value = "";
+  elements.mappingSummary.innerHTML = "";
+  elements.mappingOutput.textContent = "";
+  elements.exportOutput.textContent = "";
+  log("CSV mapping wizard cleared.");
+}
+
 function mappingHeadersFromInput() {
   const records = parseCsvRecords(elements.mappingHeaders.value).filter((row) =>
     row.some((cell) => cell.trim() !== ""),
@@ -828,6 +840,7 @@ elements.loadDemoCsvs.addEventListener("click", loadDemoCsvs);
 elements.loadMappingSample.addEventListener("click", loadMappingSample);
 elements.mappingCsvType.addEventListener("change", loadMappingSample);
 elements.suggestMapping.addEventListener("click", suggestCsvMapping);
+elements.clearMappingWizard.addEventListener("click", clearMappingWizard);
 elements.previewApplyPlan.addEventListener("click", previewApplyPlan);
 elements.previewRowTransform.addEventListener("click", previewRowTransform);
 elements.previewExport.addEventListener("click", previewCanonicalExport);
