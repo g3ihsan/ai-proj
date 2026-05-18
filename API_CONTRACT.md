@@ -817,7 +817,8 @@ Request:
 inputs must already be complete and validated by the header preview contract.
 When `mapping` is partial, row transformation can still be previewed, but the
 response remains `status=needs_review` because the resulting CSV is not yet
-adapter-ready.
+adapter-ready. At most 20 sample rows may be previewed in one request; larger
+requests return HTTP 400 with `CsvMappingValidationError` and are not truncated.
 
 Response:
 
@@ -829,6 +830,10 @@ Response:
     "csv_mapping_contract_version": 1,
     "status": "needs_review",
     "csv_type": "employees",
+    "limits": {
+      "max_preview_rows": 20,
+      "row_limit_reached": false
+    },
     "row_count": 2,
     "previewed_row_count": 2,
     "can_transform_rows": true,
@@ -863,8 +868,8 @@ Response:
 }
 ```
 
-Rows must be supplied as a non-empty array of string arrays with the same width
-as `headers`. Row preview validates row shape and string cells only;
+Rows must be supplied as a non-empty array of at most 20 string arrays with the
+same width as `headers`. Row preview validates row shape and string cells only;
 `row_semantics_validated=false` means integer fields, booleans, compact
 availability matrices, and role values are still validated later by the strict
 CSV adapter.

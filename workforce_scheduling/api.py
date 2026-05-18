@@ -31,6 +31,7 @@ from .csv_mapper import (
     CSV_TYPE_EMPLOYEES,
     CSV_TYPE_SHIFTS,
     CsvMappingValidationError,
+    MAX_PREVIEW_ROWS,
     csv_row_transformation_preview,
     csv_mapping_preview,
     csv_mapping_report,
@@ -204,6 +205,7 @@ async def metadata() -> dict[str, Any]:
         "csv_mapper": {
             "source": "Deterministic CSV header mapping suggestions and previews",
             "csv_mapping_contract_version": CSV_MAPPING_CONTRACT_VERSION,
+            "max_preview_rows": MAX_PREVIEW_ROWS,
             "uses_external_llm": False,
             "response_shape": {
                 "ok": True,

@@ -5,6 +5,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 CSV_MAPPING_CONTRACT_VERSION = 1
+MAX_PREVIEW_ROWS = 20
 CSV_TYPE_EMPLOYEES = "employees"
 CSV_TYPE_DEMAND = "demand"
 CSV_TYPE_SHIFTS = "shifts"
@@ -409,6 +410,10 @@ def csv_row_transformation_preview(
         "status": status,
         "csv_type": csv_type,
         "headers": headers,
+        "limits": {
+            "max_preview_rows": MAX_PREVIEW_ROWS,
+            "row_limit_reached": len(rows) == MAX_PREVIEW_ROWS,
+        },
         "row_count": len(rows),
         "previewed_row_count": len(transformed_rows),
         "can_transform_rows": can_transform_rows,
@@ -1329,6 +1334,10 @@ def _validated_rows(
         raise CsvMappingValidationError("rows must be a sequence of row lists")
     if not rows:
         raise CsvMappingValidationError("rows must not be empty")
+    if len(rows) > MAX_PREVIEW_ROWS:
+        raise CsvMappingValidationError(
+            f"rows must contain at most {MAX_PREVIEW_ROWS} row(s)"
+        )
     validated_rows: list[list[str]] = []
     for row_index, row in enumerate(rows):
         if isinstance(row, str) or not isinstance(row, Sequence):

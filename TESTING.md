@@ -78,9 +78,9 @@ and the fact that preview calls do not change `/solve-csv` behavior.
 `POST /csv/mapping/rows/preview` covers deterministic sample row transformation
 from explicit mappings or validated apply plans. Tests assert transformed row
 objects, transformed value order, invalid row-shape rejection, duplicate target
-reporting, JSON serializability, no file mutation, no solving, and
-`row_semantics_validated=false` because `csv_adapter.py` remains the strict
-parser.
+reporting, the 20-row preview limit, JSON serializability, no file mutation, no
+solving, and `row_semantics_validated=false` because `csv_adapter.py` remains
+the strict parser.
 
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:

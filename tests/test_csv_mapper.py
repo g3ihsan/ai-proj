@@ -7,6 +7,7 @@ import pytest
 from workforce_scheduling.csv_mapper import (
     CsvMappingError,
     CsvMappingValidationError,
+    MAX_PREVIEW_ROWS,
     build_apply_plan,
     csv_mapping_report,
     csv_mapping_preview,
@@ -564,6 +565,10 @@ def test_csv_row_transformation_preview_maps_sample_rows_without_solving() -> No
     assert preview["type"] == "csv_row_transformation_preview"
     assert preview["status"] == "needs_review"
     assert preview["csv_type"] == "employees"
+    assert preview["limits"] == {
+        "max_preview_rows": MAX_PREVIEW_ROWS,
+        "row_limit_reached": False,
+    }
     assert preview["row_count"] == 2
     assert preview["previewed_row_count"] == 2
     assert preview["can_transform_rows"] is True
@@ -671,6 +676,30 @@ def test_csv_row_transformation_preview_rejects_invalid_rows() -> None:
             headers=["Day"],
             rows=[[0]],  # type: ignore[list-item]
         )
+    with pytest.raises(CsvMappingValidationError, match="at most 20 row"):
+        csv_row_transformation_preview(
+            csv_type="demand",
+            headers=["Day"],
+            rows=[["0"] for _ in range(MAX_PREVIEW_ROWS + 1)],
+        )
+
+
+def test_csv_row_transformation_preview_marks_limit_reached_at_maximum() -> None:
+    preview = csv_row_transformation_preview(
+        csv_type="demand",
+        headers=["Day", "Shift", "Role", "Required"],
+        rows=[
+            [str(row_index), "morning", "worker", "1"]
+            for row_index in range(MAX_PREVIEW_ROWS)
+        ],
+    )
+
+    assert preview["row_count"] == MAX_PREVIEW_ROWS
+    assert preview["previewed_row_count"] == MAX_PREVIEW_ROWS
+    assert preview["limits"] == {
+        "max_preview_rows": MAX_PREVIEW_ROWS,
+        "row_limit_reached": True,
+    }
 
 
 def test_transform_row_with_apply_plan_reports_duplicate_targets() -> None:

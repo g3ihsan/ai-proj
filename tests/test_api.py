@@ -349,6 +349,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
         "csv_mapper": {
             "source": "Deterministic CSV header mapping suggestions and previews",
             "csv_mapping_contract_version": 1,
+            "max_preview_rows": 20,
             "uses_external_llm": False,
             "response_shape": {
                 "ok": True,
@@ -908,6 +909,10 @@ def test_api_csv_row_transformation_preview_returns_deterministic_rows() -> None
     assert first.json() == second.json()
     assert result_payload["type"] == "csv_row_transformation_preview"
     assert result_payload["status"] == "needs_review"
+    assert result_payload["limits"] == {
+        "max_preview_rows": 20,
+        "row_limit_reached": False,
+    }
     assert result_payload["can_transform_rows"] is True
     assert result_payload["row_data_validated"] is True
     assert result_payload["row_semantics_validated"] is False
@@ -973,6 +978,14 @@ def test_api_csv_row_transformation_preview_accepts_apply_plan() -> None:
         (
             {"csv_type": "demand", "headers": ["Day"], "rows": [["0", "extra"]]},
             "row 0 has 2 cell(s), expected 1",
+        ),
+        (
+            {
+                "csv_type": "demand",
+                "headers": ["Day"],
+                "rows": [["0"] for _ in range(21)],
+            },
+            "rows must contain at most 20 row(s)",
         ),
     ],
 )
