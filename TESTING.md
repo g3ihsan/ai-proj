@@ -151,14 +151,19 @@ HTTP endpoints:
 - `GET /solve-jobs/{job_id}`
 
 `GET /viewer` redirects to `GET /viewer/`. `GET /viewer/` serves a static
-roster viewer for the existing JSON, job, and CSV solve endpoints. It has no
-separate build step and does not change solver behavior. Demo CSV files are
-available at `/viewer/examples/employees.csv`, `/viewer/examples/shifts.csv`,
-and `/viewer/examples/demand.csv` for local viewer demos. The JSON solve panel
-includes a `compact`/`standard`/`debug` response mode selector that updates the
-canonical request `options.response_mode` before solving. The viewer disables
-action buttons while checks, solves, uploads, or job polling are running, and
-uses the Issues tab for API errors, validation rows, and missing-input messages.
+roster viewer for the existing JSON, job, CSV solve, and CSV mapping preview
+endpoints. It has no separate build step and does not change solver behavior.
+Demo CSV files are available at `/viewer/examples/employees.csv`,
+`/viewer/examples/shifts.csv`, and `/viewer/examples/demand.csv` for local
+viewer demos. The JSON solve panel includes a `compact`/`standard`/`debug`
+response mode selector that updates the canonical request
+`options.response_mode` before solving. The CSV Mapping Wizard calls only
+`/csv/mapping/suggest`, `/csv/mapping/preview`,
+`/csv/mapping/rows/preview`, and `/csv/mapping/export/preview`; it does not
+write files, call `/solve-csv`, or submit mapped CSVs to the solver. The viewer
+disables action buttons while checks, solves, uploads, previews, or job polling
+are running, and uses the Issues tab for API errors, validation rows, and
+missing-input messages.
 If the JSON editor contains malformed JSON, changing response mode leaves the
 editor unchanged and reports an `InvalidJson` issue instead of falling back to
 sample data.

@@ -246,6 +246,9 @@ persistence, auth, websocket delivery, or any new solver behavior. The static
 viewer is a local API demonstration surface only and does not add persistent
 frontend state, storage, or alternate optimization behavior. Its response mode
 selector changes only `options.response_mode` serialization and does not change
-optimization decisions. Busy states and the Issues tab are viewer-only
-presentation behavior. Viewer-side malformed JSON handling is also presentation
-only: it reports an `InvalidJson` issue and does not call the solver.
+optimization decisions. Its CSV Mapping Wizard calls only deterministic mapping
+preview endpoints, does not write files, does not call `/solve-csv`, and does
+not submit mapped CSVs to the solver. Busy states and the Issues tab are
+viewer-only presentation behavior. Viewer-side malformed JSON handling is also
+presentation only: it reports an `InvalidJson` issue and does not call the
+solver.

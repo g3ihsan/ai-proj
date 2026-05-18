@@ -50,12 +50,15 @@ Request limits:
 
 The optional static viewer is served by the same process at `/viewer/`. Requests
 to `/viewer` redirect to `/viewer/` so relative asset paths resolve
-consistently. The viewer calls the existing JSON, job, and CSV endpoints only;
-it has no persistence, auth, or separate scheduling behavior. Checked-in demo
-CSV files are served read-only under `/viewer/examples/`. The viewer exposes a
-`compact`/`standard`/`debug` response mode selector for the canonical JSON solve
-request, disables action buttons while operations are running, and shows API or
-validation problems in an Issues tab.
+consistently. The viewer calls the existing JSON, job, CSV solve, and CSV
+mapping preview endpoints only; it has no persistence, auth, or separate
+scheduling behavior. Checked-in demo CSV files are served read-only under
+`/viewer/examples/`. The viewer exposes a `compact`/`standard`/`debug` response
+mode selector for the canonical JSON solve request, disables action buttons
+while operations are running, shows API or validation problems in an Issues tab,
+and includes a CSV Mapping Wizard that previews mapping suggestions,
+apply-plans, row transformations, and canonical CSV text without writing files
+or calling `/solve-csv`.
 
 ## Endpoints
 

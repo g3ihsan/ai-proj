@@ -41,6 +41,41 @@ const sampleRequest = {
   },
 };
 
+const mappingSamples = {
+  employees: {
+    headers: "Staff ID,Full Name,Skills,Cost Per Hour,Weekly Hours Limit,Available Day0 Shift0",
+    rows: 'E1,"Asha, Lead",worker|supervisor,20,40,yes\nE2,Ravi,worker,18,40,no',
+    mapping: {
+      employee_id: "Staff ID",
+      name: "Full Name",
+      roles: "Skills",
+      hourly_cost: "Cost Per Hour",
+      max_weekly_hours: "Weekly Hours Limit",
+      availability: ["Available Day0 Shift0"],
+    },
+  },
+  demand: {
+    headers: "Day Index,Shift Name,Required Role,Headcount",
+    rows: "0,morning,worker,2\n1,evening,supervisor,1",
+    mapping: {
+      day: "Day Index",
+      shift: "Shift Name",
+      role: "Required Role",
+      required: "Headcount",
+    },
+  },
+  shifts: {
+    headers: "Shift No,Shift Label,Starts At,Ends At",
+    rows: "0,morning,8,16\n1,evening,16,24",
+    mapping: {
+      shift: "Shift No",
+      shift_name: "Shift Label",
+      start_hour: "Starts At",
+      end_hour: "Ends At",
+    },
+  },
+};
+
 const state = {
   activeTab: "assignments",
   csvText: "",
@@ -69,6 +104,18 @@ const elements = {
   solveCsv: document.querySelector("#solve-csv"),
   submitJob: document.querySelector("#submit-job"),
   downloadCsv: document.querySelector("#download-csv"),
+  mappingCsvType: document.querySelector("#mapping-csv-type"),
+  mappingHeaders: document.querySelector("#mapping-headers"),
+  mappingRows: document.querySelector("#mapping-rows"),
+  mappingJson: document.querySelector("#mapping-json"),
+  loadMappingSample: document.querySelector("#load-mapping-sample"),
+  suggestMapping: document.querySelector("#suggest-mapping"),
+  previewApplyPlan: document.querySelector("#preview-apply-plan"),
+  previewRowTransform: document.querySelector("#preview-row-transform"),
+  previewExport: document.querySelector("#preview-export"),
+  mappingSummary: document.querySelector("#mapping-summary"),
+  mappingOutput: document.querySelector("#mapping-output"),
+  exportOutput: document.querySelector("#export-output"),
   summaryStrip: document.querySelector("#summary-strip"),
   resultHead: document.querySelector("#result-head"),
   resultBody: document.querySelector("#result-body"),
@@ -110,6 +157,11 @@ function setBusy(isBusy, statusText = "") {
     elements.solveJson,
     elements.solveCsv,
     elements.submitJob,
+    elements.loadMappingSample,
+    elements.suggestMapping,
+    elements.previewApplyPlan,
+    elements.previewRowTransform,
+    elements.previewExport,
   ].forEach((button) => {
     button.disabled = isBusy;
   });
@@ -328,6 +380,15 @@ function setRowsFromCsv(csvText) {
 }
 
 function parseCsv(text) {
+  const [headers = [], ...body] = parseCsvRecords(text).filter((row) =>
+    row.some((cell) => cell !== ""),
+  );
+  return body.map((row) =>
+    Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""])),
+  );
+}
+
+function parseCsvRecords(text) {
   const rows = [];
   let current = "";
   let record = [];
@@ -357,10 +418,7 @@ function parseCsv(text) {
     record.push(current);
     rows.push(record);
   }
-  const [headers = [], ...body] = rows.filter((row) => row.some((cell) => cell !== ""));
-  return body.map((row) =>
-    Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""])),
-  );
+  return rows;
 }
 
 function escapeHtml(value) {
@@ -508,6 +566,165 @@ async function fetchDemoCsv(filename) {
   return new File([text], filename, { type: "text/csv" });
 }
 
+function loadMappingSample() {
+  const sample = mappingSamples[elements.mappingCsvType.value] || mappingSamples.employees;
+  elements.mappingHeaders.value = sample.headers;
+  elements.mappingRows.value = sample.rows;
+  elements.mappingJson.value = JSON.stringify(sample.mapping, null, 2);
+  renderMappingResult("Sample loaded", {
+    csv_type: elements.mappingCsvType.value,
+    headers: mappingHeadersFromInput(),
+    rows: mappingRowsFromInput(),
+  });
+  elements.exportOutput.textContent = "";
+  log("CSV mapping sample loaded", { csv_type: elements.mappingCsvType.value });
+}
+
+function mappingHeadersFromInput() {
+  const records = parseCsvRecords(elements.mappingHeaders.value).filter((row) =>
+    row.some((cell) => cell.trim() !== ""),
+  );
+  const headers = records[0] || [];
+  if (!headers.length) {
+    throw new Error("CSV mapping wizard requires at least one header.");
+  }
+  return headers;
+}
+
+function mappingRowsFromInput() {
+  return parseCsvRecords(elements.mappingRows.value).filter((row) =>
+    row.some((cell) => cell.trim() !== ""),
+  );
+}
+
+function optionalMappingFromInput() {
+  const value = elements.mappingJson.value.trim();
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    throw invalidJsonError(error);
+  }
+}
+
+function mappingBasePayload() {
+  const payload = {
+    csv_type: elements.mappingCsvType.value,
+    headers: mappingHeadersFromInput(),
+  };
+  const mapping = optionalMappingFromInput();
+  if (mapping !== undefined) {
+    payload.mapping = mapping;
+  }
+  return payload;
+}
+
+function mappingRowPayload() {
+  const payload = mappingBasePayload();
+  const rows = mappingRowsFromInput();
+  if (!rows.length) {
+    throw new Error("CSV mapping wizard requires at least one sample row.");
+  }
+  payload.rows = rows;
+  return payload;
+}
+
+function renderMappingResult(label, payload) {
+  const result = payload?.result || payload || {};
+  const status = result.status || "ready";
+  const canApply = result.apply_plan?.can_apply ?? result.can_apply ?? "";
+  const canTransform = result.can_transform_rows ?? "";
+  const canExport = result.can_export ?? "";
+  const reason =
+    result.export_ready_reason ||
+    result.apply_plan?.reason ||
+    result.reason ||
+    "";
+  elements.mappingSummary.innerHTML = [
+    metricCard("Status", status),
+    metricCard("Can apply", canApply),
+    metricCard("Can transform", canTransform),
+    metricCard("Can export", canExport || reason),
+  ].join("");
+  elements.mappingOutput.textContent = JSON.stringify(payload, null, 2);
+  elements.exportOutput.textContent = result.csv_text || "";
+  log(label, {
+    type: result.type || "",
+    status,
+    reason,
+    will_solve: result.will_solve ?? false,
+    will_write_files: result.will_write_files ?? false,
+  });
+}
+
+async function postJson(path, payload) {
+  const response = await apiFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const envelope = await response.json();
+  if (!response.ok || !envelope.ok) {
+    throw responseError(response, envelope);
+  }
+  return envelope;
+}
+
+async function suggestCsvMapping() {
+  await withBusy("Suggesting mapping...", async () => {
+    try {
+      const payload = {
+        csv_type: elements.mappingCsvType.value,
+        headers: mappingHeadersFromInput(),
+      };
+      const envelope = await postJson("/csv/mapping/suggest", payload);
+      renderMappingResult("CSV mapping suggestion loaded", envelope);
+    } catch (error) {
+      setIssue(error);
+      logError("CSV mapping suggestion failed", error);
+    }
+  });
+}
+
+async function previewApplyPlan() {
+  await withBusy("Previewing apply plan...", async () => {
+    try {
+      const envelope = await postJson("/csv/mapping/preview", mappingBasePayload());
+      renderMappingResult("CSV apply plan preview loaded", envelope);
+    } catch (error) {
+      setIssue(error);
+      logError("CSV apply plan preview failed", error);
+    }
+  });
+}
+
+async function previewRowTransform() {
+  await withBusy("Previewing rows...", async () => {
+    try {
+      const envelope = await postJson("/csv/mapping/rows/preview", mappingRowPayload());
+      renderMappingResult("CSV row preview loaded", envelope);
+    } catch (error) {
+      setIssue(error);
+      logError("CSV row preview failed", error);
+    }
+  });
+}
+
+async function previewCanonicalExport() {
+  await withBusy("Previewing export...", async () => {
+    try {
+      const envelope = await postJson(
+        "/csv/mapping/export/preview",
+        mappingRowPayload(),
+      );
+      renderMappingResult("CSV export preview loaded", envelope);
+    } catch (error) {
+      setIssue(error);
+      logError("CSV export preview failed", error);
+    }
+  });
+}
+
 async function submitJob() {
   await withBusy("Submitting job...", async () => {
     try {
@@ -608,10 +825,17 @@ elements.responseMode.addEventListener("change", () => {
   }
 });
 elements.loadDemoCsvs.addEventListener("click", loadDemoCsvs);
+elements.loadMappingSample.addEventListener("click", loadMappingSample);
+elements.mappingCsvType.addEventListener("change", loadMappingSample);
+elements.suggestMapping.addEventListener("click", suggestCsvMapping);
+elements.previewApplyPlan.addEventListener("click", previewApplyPlan);
+elements.previewRowTransform.addEventListener("click", previewRowTransform);
+elements.previewExport.addEventListener("click", previewCanonicalExport);
 elements.solveJson.addEventListener("click", solveJson);
 elements.solveCsv.addEventListener("click", solveCsv);
 elements.submitJob.addEventListener("click", submitJob);
 elements.downloadCsv.addEventListener("click", downloadCsv);
+loadMappingSample();
 renderSummary();
 renderTable();
 checkApi();

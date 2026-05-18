@@ -467,6 +467,9 @@ def test_api_serves_static_roster_viewer() -> None:
     assert response.headers["content-type"].startswith("text/html")
     assert "Roster Viewer" in response.text
     assert 'id="response-mode"' in response.text
+    assert "CSV Mapping Wizard" in response.text
+    assert 'id="mapping-csv-type"' in response.text
+    assert 'id="preview-export"' in response.text
     assert 'data-tab="issues"' in response.text
     assert "./app.js" in response.text
 
@@ -485,6 +488,10 @@ def test_api_serves_static_roster_viewer() -> None:
     assert "invalidJsonError" in app_js_response.text
     assert "Invalid JSON:" in app_js_response.text
     assert "Response mode update failed" in app_js_response.text
+    assert "suggestCsvMapping" in app_js_response.text
+    assert "previewCanonicalExport" in app_js_response.text
+    assert "/csv/mapping/export/preview" in app_js_response.text
+    assert "CSV export preview loaded" in app_js_response.text
 
     styles_response = _api_request("GET", "/viewer/styles.css")
     assert styles_response.status_code == 200
@@ -492,6 +499,7 @@ def test_api_serves_static_roster_viewer() -> None:
     assert ".helper-text" in styles_response.text
     assert ".compact-field" in styles_response.text
     assert ".status-dot.busy" in styles_response.text
+    assert ".preview-box" in styles_response.text
 
 
 def test_api_csv_mapping_suggest_returns_deterministic_report() -> None:

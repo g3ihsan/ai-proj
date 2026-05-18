@@ -102,6 +102,55 @@
           </div>
         </section>
 
+        <section class="panel csv-mapping-panel">
+          <div class="panel-header">
+            <h2>CSV Mapping Wizard</h2>
+            <div class="button-row">
+              <button type="button" class="ghost-button" id="load-mapping-sample">Sample</button>
+              <button type="button" class="ghost-button" id="suggest-mapping">Suggest</button>
+            </div>
+          </div>
+          <p class="helper-text">Preview deterministic CSV mapping and canonical export text without writing files or solving.</p>
+          <div class="mapping-grid">
+            <label class="field compact-field">
+              <span>CSV type</span>
+              <select id="mapping-csv-type">
+                <option value="employees">employees</option>
+                <option value="demand">demand</option>
+                <option value="shifts">shifts</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Messy headers</span>
+              <textarea class="short-textarea" id="mapping-headers" spellcheck="false"></textarea>
+            </label>
+            <label class="field">
+              <span>Sample rows</span>
+              <textarea class="short-textarea" id="mapping-rows" spellcheck="false"></textarea>
+            </label>
+            <label class="field">
+              <span>Optional mapping JSON</span>
+              <textarea class="short-textarea" id="mapping-json" spellcheck="false"></textarea>
+            </label>
+          </div>
+          <div class="button-row mapping-actions">
+            <button type="button" class="ghost-button" id="preview-apply-plan">Apply Plan</button>
+            <button type="button" class="ghost-button" id="preview-row-transform">Rows</button>
+            <button type="button" class="primary-button" id="preview-export">Export Preview</button>
+          </div>
+          <div class="summary-strip wizard-summary" id="mapping-summary"></div>
+          <div class="preview-grid">
+            <label class="field">
+              <span>Mapping response</span>
+              <pre class="preview-box" id="mapping-output"></pre>
+            </label>
+            <label class="field">
+              <span>Canonical CSV text</span>
+              <pre class="preview-box" id="export-output"></pre>
+            </label>
+          </div>
+        </section>
+
         <section class="panel results-panel">
           <div class="panel-header">
             <h2>Roster Results</h2>
