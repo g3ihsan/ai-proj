@@ -498,7 +498,10 @@ def test_api_serves_static_roster_viewer() -> None:
     assert "suggestCsvMapping" in app_js_response.text
     assert "clearMappingWizard" in app_js_response.text
     assert "validateMappingHeaders" in app_js_response.text
+    assert "validateMappingRows" in app_js_response.text
     assert "Name every header cell before previewing." in app_js_response.text
+    assert "Fix row length before previewing rows or export." in app_js_response.text
+    assert "No canonical CSV export preview yet." in app_js_response.text
     assert "previewCanonicalExport" in app_js_response.text
     assert 'metricCard("Can export", canExport)' in app_js_response.text
     assert 'metricCard("Reason", reason)' in app_js_response.text

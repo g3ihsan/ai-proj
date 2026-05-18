@@ -76,6 +76,9 @@ const mappingSamples = {
   },
 };
 
+const exportPreviewEmptyState =
+  "No canonical CSV export preview yet. Use Preview Export after headers, rows, and mapping are ready.";
+
 const state = {
   activeTab: "assignments",
   csvText: "",
@@ -578,7 +581,6 @@ function loadMappingSample() {
     headers: mappingHeadersFromInput(),
     rows: mappingRowsFromInput(),
   });
-  elements.exportOutput.textContent = "";
   log("CSV mapping sample loaded", { csv_type: elements.mappingCsvType.value });
 }
 
@@ -619,6 +621,17 @@ function mappingRowsFromInput() {
   );
 }
 
+function validateMappingRows(rows, headerCount) {
+  const mismatchedRowIndex = rows.findIndex((row) => row.length !== headerCount);
+  if (mismatchedRowIndex !== -1) {
+    const row = rows[mismatchedRowIndex];
+    throw new Error(
+      `CSV mapping wizard row ${mismatchedRowIndex + 1} has ${row.length} cell(s); expected ${headerCount}. Fix row length before previewing rows or export.`,
+    );
+  }
+  return rows;
+}
+
 function optionalMappingFromInput() {
   const value = elements.mappingJson.value.trim();
   if (!value) return undefined;
@@ -647,7 +660,7 @@ function mappingRowPayload() {
   if (!rows.length) {
     throw new Error("CSV mapping wizard requires at least one sample row.");
   }
-  payload.rows = rows;
+  payload.rows = validateMappingRows(rows, payload.headers.length);
   return payload;
 }
 
@@ -670,7 +683,7 @@ function renderMappingResult(label, payload) {
     metricCard("Reason", reason),
   ].join("");
   elements.mappingOutput.textContent = JSON.stringify(payload, null, 2);
-  elements.exportOutput.textContent = result.csv_text || "";
+  elements.exportOutput.textContent = result.csv_text || exportPreviewEmptyState;
   log(label, {
     type: result.type || "",
     status,
