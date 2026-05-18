@@ -148,8 +148,12 @@
             <div class="field">
               <div class="preview-field-header">
                 <span>Canonical CSV text</span>
-                <button type="button" class="ghost-button compact-button" id="copy-canonical-csv" disabled>Copy CSV</button>
+                <div class="button-row compact-actions">
+                  <button type="button" class="ghost-button compact-button" id="copy-canonical-csv" disabled>Copy CSV</button>
+                  <button type="button" class="ghost-button compact-button" id="download-canonical-csv" disabled>Download CSV</button>
+                </div>
               </div>
+              <div class="export-safety-flags" id="export-safety-flags">Preview only. No backend file write or solve.</div>
               <pre class="preview-box" id="export-output"></pre>
             </div>
           </div>

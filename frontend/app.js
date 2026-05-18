@@ -119,9 +119,11 @@ const elements = {
   previewRowTransform: document.querySelector("#preview-row-transform"),
   previewExport: document.querySelector("#preview-export"),
   copyCanonicalCsv: document.querySelector("#copy-canonical-csv"),
+  downloadCanonicalCsv: document.querySelector("#download-canonical-csv"),
   mappingSummary: document.querySelector("#mapping-summary"),
   mappingOutput: document.querySelector("#mapping-output"),
   exportOutput: document.querySelector("#export-output"),
+  exportSafetyFlags: document.querySelector("#export-safety-flags"),
   summaryStrip: document.querySelector("#summary-strip"),
   resultHead: document.querySelector("#result-head"),
   resultBody: document.querySelector("#result-body"),
@@ -173,15 +175,16 @@ function setBusy(isBusy, statusText = "") {
     button.disabled = isBusy;
   });
   elements.downloadCsv.disabled = isBusy || !state.csvText;
-  updateCopyCsvButton();
+  updateCanonicalCsvActions();
   elements.serviceDot.classList.toggle("busy", isBusy);
   if (statusText) {
     elements.serviceStatus.textContent = statusText;
   }
 }
 
-function updateCopyCsvButton() {
+function updateCanonicalCsvActions() {
   elements.copyCanonicalCsv.disabled = state.isBusy || !state.canonicalCsvText;
+  elements.downloadCanonicalCsv.disabled = state.isBusy || !state.canonicalCsvText;
 }
 
 async function withBusy(statusText, operation) {
@@ -598,13 +601,25 @@ function clearMappingWizard() {
   elements.mappingSummary.innerHTML = "";
   elements.mappingOutput.textContent = "";
   setCanonicalCsvText("");
+  setExportSafetyFlags({});
   log("CSV mapping wizard cleared.");
 }
 
 function setCanonicalCsvText(csvText) {
   state.canonicalCsvText = csvText || "";
   elements.exportOutput.textContent = state.canonicalCsvText || exportPreviewEmptyState;
-  updateCopyCsvButton();
+  updateCanonicalCsvActions();
+}
+
+function setExportSafetyFlags(result = {}) {
+  const willWriteFiles = result.will_write_files ?? false;
+  const willMutateFiles = result.will_mutate_files ?? false;
+  const willSolve = result.will_solve ?? false;
+  elements.exportSafetyFlags.textContent = [
+    `Will write files: ${willWriteFiles}`,
+    `Will mutate files: ${willMutateFiles}`,
+    `Will solve: ${willSolve}`,
+  ].join(" | ");
 }
 
 function validateMappingHeaders(headers) {
@@ -697,6 +712,7 @@ function renderMappingResult(label, payload) {
   ].join("");
   elements.mappingOutput.textContent = JSON.stringify(payload, null, 2);
   setCanonicalCsvText(result.csv_text || "");
+  setExportSafetyFlags(result);
   log(label, {
     type: result.type || "",
     status,
@@ -717,6 +733,21 @@ async function copyCanonicalCsv() {
   } catch (error) {
     logError("Canonical CSV copy failed", error);
   }
+}
+
+function downloadCanonicalCsv() {
+  if (!state.canonicalCsvText) {
+    log("No canonical CSV export preview to download.");
+    return;
+  }
+  const blob = new Blob([state.canonicalCsvText], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `canonical-${elements.mappingCsvType.value}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  log("Canonical CSV downloaded.", { csv_type: elements.mappingCsvType.value });
 }
 
 async function postJson(path, payload) {
@@ -895,6 +926,7 @@ elements.previewApplyPlan.addEventListener("click", previewApplyPlan);
 elements.previewRowTransform.addEventListener("click", previewRowTransform);
 elements.previewExport.addEventListener("click", previewCanonicalExport);
 elements.copyCanonicalCsv.addEventListener("click", copyCanonicalCsv);
+elements.downloadCanonicalCsv.addEventListener("click", downloadCanonicalCsv);
 elements.solveJson.addEventListener("click", solveJson);
 elements.solveCsv.addEventListener("click", solveCsv);
 elements.submitJob.addEventListener("click", submitJob);

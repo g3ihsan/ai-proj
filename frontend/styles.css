@@ -258,6 +258,10 @@ button:disabled {
   margin-top: 14px;
 }
 
+.compact-actions {
+  gap: 8px;
+}
+
 .preview-field-header {
   align-items: center;
   display: flex;
@@ -269,6 +273,12 @@ button:disabled {
   font-size: 12px;
   min-height: 30px;
   padding: 0 10px;
+}
+
+.export-safety-flags {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .preview-grid {

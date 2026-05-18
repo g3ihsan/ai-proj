@@ -471,6 +471,8 @@ def test_api_serves_static_roster_viewer() -> None:
     assert 'id="mapping-csv-type"' in response.text
     assert 'id="preview-export"' in response.text
     assert 'id="copy-canonical-csv"' in response.text
+    assert 'id="download-canonical-csv"' in response.text
+    assert 'id="export-safety-flags"' in response.text
     assert 'id="clear-mapping-wizard"' in response.text
     assert "Load Sample" in response.text
     assert "Suggest Mapping" in response.text
@@ -478,6 +480,8 @@ def test_api_serves_static_roster_viewer() -> None:
     assert "Preview Rows" in response.text
     assert "Preview Export" in response.text
     assert "Copy CSV" in response.text
+    assert "Download CSV" in response.text
+    assert "Preview only. No backend file write or solve." in response.text
     assert "Clear Wizard" in response.text
     assert 'data-tab="issues"' in response.text
     assert "./app.js" in response.text
@@ -506,8 +510,15 @@ def test_api_serves_static_roster_viewer() -> None:
     assert "No canonical CSV export preview yet." in app_js_response.text
     assert "previewCanonicalExport" in app_js_response.text
     assert "copyCanonicalCsv" in app_js_response.text
+    assert "downloadCanonicalCsv" in app_js_response.text
+    assert "setExportSafetyFlags" in app_js_response.text
     assert "navigator.clipboard.writeText" in app_js_response.text
     assert "Canonical CSV copied." in app_js_response.text
+    assert "Canonical CSV downloaded." in app_js_response.text
+    assert "canonical-${elements.mappingCsvType.value}.csv" in app_js_response.text
+    assert "Will write files:" in app_js_response.text
+    assert "Will mutate files:" in app_js_response.text
+    assert "Will solve:" in app_js_response.text
     assert 'metricCard("Can export", canExport)' in app_js_response.text
     assert 'metricCard("Reason", reason)' in app_js_response.text
     assert "/csv/mapping/export/preview" in app_js_response.text
@@ -523,6 +534,8 @@ def test_api_serves_static_roster_viewer() -> None:
     assert ".wizard-summary" in styles_response.text
     assert ".preview-field-header" in styles_response.text
     assert ".compact-button" in styles_response.text
+    assert ".compact-actions" in styles_response.text
+    assert ".export-safety-flags" in styles_response.text
     assert ".preview-box" in styles_response.text
 
 
