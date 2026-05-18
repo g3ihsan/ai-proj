@@ -26,4 +26,7 @@ and sample rows that do not match the header length are rejected in the viewer
 before a mapping preview request is sent. The canonical CSV copy action copies
 only the in-memory export preview text from the browser. The canonical CSV
 download action also runs in the browser and uses the same in-memory preview
-text; it does not write files on the backend.
+text with deterministic `canonical-{csv_type}-preview.csv` filenames; it does
+not write files on the backend. Export safety flags show whether the preview
+would write files, mutate files, solve, use an external LLM, or validate row
+semantics.

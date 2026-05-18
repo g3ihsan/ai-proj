@@ -515,10 +515,13 @@ def test_api_serves_static_roster_viewer() -> None:
     assert "navigator.clipboard.writeText" in app_js_response.text
     assert "Canonical CSV copied." in app_js_response.text
     assert "Canonical CSV downloaded." in app_js_response.text
-    assert "canonical-${elements.mappingCsvType.value}.csv" in app_js_response.text
+    assert "canonicalCsvDownloadFilename" in app_js_response.text
+    assert "canonical-${elements.mappingCsvType.value}-preview.csv" in app_js_response.text
     assert "Will write files:" in app_js_response.text
     assert "Will mutate files:" in app_js_response.text
     assert "Will solve:" in app_js_response.text
+    assert "Uses external LLM:" in app_js_response.text
+    assert "Row semantics validated:" in app_js_response.text
     assert 'metricCard("Can export", canExport)' in app_js_response.text
     assert 'metricCard("Reason", reason)' in app_js_response.text
     assert "/csv/mapping/export/preview" in app_js_response.text

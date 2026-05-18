@@ -615,10 +615,14 @@ function setExportSafetyFlags(result = {}) {
   const willWriteFiles = result.will_write_files ?? false;
   const willMutateFiles = result.will_mutate_files ?? false;
   const willSolve = result.will_solve ?? false;
+  const usesExternalLlm = result.uses_external_llm ?? false;
+  const rowSemanticsValidated = result.row_semantics_validated ?? false;
   elements.exportSafetyFlags.textContent = [
     `Will write files: ${willWriteFiles}`,
     `Will mutate files: ${willMutateFiles}`,
     `Will solve: ${willSolve}`,
+    `Uses external LLM: ${usesExternalLlm}`,
+    `Row semantics validated: ${rowSemanticsValidated}`,
   ].join(" | ");
 }
 
@@ -744,10 +748,14 @@ function downloadCanonicalCsv() {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `canonical-${elements.mappingCsvType.value}.csv`;
+  anchor.download = canonicalCsvDownloadFilename();
   anchor.click();
   URL.revokeObjectURL(url);
   log("Canonical CSV downloaded.", { csv_type: elements.mappingCsvType.value });
+}
+
+function canonicalCsvDownloadFilename() {
+  return `canonical-${elements.mappingCsvType.value}-preview.csv`;
 }
 
 async function postJson(path, payload) {
