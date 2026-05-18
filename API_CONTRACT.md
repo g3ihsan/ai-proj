@@ -837,7 +837,10 @@ Response:
     "row_count": 2,
     "previewed_row_count": 2,
     "can_transform_rows": true,
+    "row_shape_validated": true,
     "row_data_validated": true,
+    "required_values_checked": true,
+    "required_value_errors": [],
     "row_semantics_validated": false,
     "uses_external_llm": false,
     "will_mutate_files": false,
@@ -869,10 +872,14 @@ Response:
 ```
 
 Rows must be supplied as a non-empty array of at most 20 string arrays with the
-same width as `headers`. Row preview validates row shape and string cells only;
-`row_semantics_validated=false` means integer fields, booleans, compact
-availability matrices, and role values are still validated later by the strict
-CSV adapter.
+same width as `headers`. `row_shape_validated=true` means every previewed row
+has the same column count as `headers` and contains only strings. Row preview
+also performs lightweight required-value checks for mapped canonical columns and
+explicit availability columns; blank required values are reported in both
+`required_value_errors` and the top-level `errors` list and keep
+`status=needs_review`. `row_semantics_validated=false` means integer fields,
+booleans, compact availability matrices, and role values are still validated
+later by the strict CSV adapter.
 
 ### `POST /solve-csv`
 

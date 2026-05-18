@@ -386,11 +386,17 @@ def csv_row_transformation_preview(
         rows=rows,
         apply_plan=apply_plan_payload,
     )
-    row_errors = [
+    transformation_errors = [
         error
         for transformed_row in transformed_rows
         for error in transformed_row["errors"]
     ]
+    required_value_errors = _required_value_errors(
+        csv_type=csv_type,
+        apply_plan=apply_plan_payload,
+        transformed_rows=transformed_rows,
+    )
+    row_errors = [*transformation_errors, *required_value_errors]
     unresolved_actions = [
         action
         for action in apply_plan_payload["column_renames"]
@@ -417,7 +423,10 @@ def csv_row_transformation_preview(
         "row_count": len(rows),
         "previewed_row_count": len(transformed_rows),
         "can_transform_rows": can_transform_rows,
+        "row_shape_validated": True,
         "row_data_validated": True,
+        "required_values_checked": True,
+        "required_value_errors": required_value_errors,
         "row_semantics_validated": False,
         "uses_external_llm": False,
         "will_mutate_files": False,
@@ -847,6 +856,88 @@ def _ensure_apply_plan_sources_exist(
     ]
     if apply_plan.get("canonical_headers_after_apply") != expected_headers_after_apply:
         raise CsvMappingValidationError("apply_plan headers do not match request headers")
+
+
+def _required_value_errors(
+    *,
+    csv_type: str,
+    apply_plan: Mapping[str, Any],
+    transformed_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    required_headers = _required_value_headers_for_apply_plan(
+        csv_type=csv_type,
+        apply_plan=apply_plan,
+    )
+    errors: list[dict[str, Any]] = []
+    for transformed_row in transformed_rows:
+        row_index = transformed_row["row_index"]
+        transformed = transformed_row["transformed"]
+        for target_header in required_headers:
+            if (
+                target_header in transformed
+                and transformed[target_header].strip() == ""
+            ):
+                errors.append(
+                    {
+                        "row_index": row_index,
+                        "type": "missing_required_value",
+                        "field": _required_value_field_for_header(
+                            csv_type=csv_type,
+                            apply_plan=apply_plan,
+                            target_header=target_header,
+                        ),
+                        "target_header": target_header,
+                        "message": (
+                            f"Row {row_index} missing required value for "
+                            f"{target_header}"
+                        ),
+                    }
+                )
+    return errors
+
+
+def _required_value_headers_for_apply_plan(
+    *,
+    csv_type: str,
+    apply_plan: Mapping[str, Any],
+) -> list[str]:
+    canonical_fields = set(_canonical_fields_for_csv_type(csv_type))
+    transformed_headers = apply_plan["canonical_headers_after_apply"]
+    required_headers: list[str] = []
+    for header in transformed_headers:
+        if header in canonical_fields and header not in required_headers:
+            required_headers.append(header)
+
+    if csv_type == CSV_TYPE_EMPLOYEES:
+        for action in apply_plan["column_renames"]:
+            if action.get("canonical_field") != "availability":
+                continue
+            target_header = action.get("target_header")
+            if (
+                isinstance(target_header, str)
+                and target_header in transformed_headers
+                and target_header not in required_headers
+            ):
+                required_headers.append(target_header)
+
+    return required_headers
+
+
+def _required_value_field_for_header(
+    *,
+    csv_type: str,
+    apply_plan: Mapping[str, Any],
+    target_header: str,
+) -> str:
+    if target_header in _canonical_fields_for_csv_type(csv_type):
+        return target_header
+    if csv_type == CSV_TYPE_EMPLOYEES:
+        for action in apply_plan["column_renames"]:
+            if action.get("target_header") == target_header:
+                canonical_field = action.get("canonical_field")
+                if isinstance(canonical_field, str):
+                    return canonical_field
+    return target_header
 
 
 def _column_mapping_report(

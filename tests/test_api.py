@@ -914,7 +914,10 @@ def test_api_csv_row_transformation_preview_returns_deterministic_rows() -> None
         "row_limit_reached": False,
     }
     assert result_payload["can_transform_rows"] is True
+    assert result_payload["row_shape_validated"] is True
     assert result_payload["row_data_validated"] is True
+    assert result_payload["required_values_checked"] is True
+    assert result_payload["required_value_errors"] == []
     assert result_payload["row_semantics_validated"] is False
     assert result_payload["will_mutate_files"] is False
     assert result_payload["will_solve"] is False
@@ -961,6 +964,41 @@ def test_api_csv_row_transformation_preview_accepts_apply_plan() -> None:
         "role": "worker",
         "required": "2",
     }
+    assert result_payload["row_shape_validated"] is True
+    assert result_payload["required_values_checked"] is True
+    assert result_payload["required_value_errors"] == []
+
+
+def test_api_csv_row_transformation_preview_reports_required_value_errors() -> None:
+    response = _api_request(
+        "POST",
+        "/csv/mapping/rows/preview",
+        json_payload={
+            "csv_type": "demand",
+            "headers": ["Day", "Shift", "Role", "Required"],
+            "rows": [["0", "morning", "", "2"]],
+        },
+    )
+    response_payload = response.json()
+    result_payload = response_payload["result"]
+    expected_error = {
+        "row_index": 0,
+        "type": "missing_required_value",
+        "field": "role",
+        "target_header": "role",
+        "message": "Row 0 missing required value for role",
+    }
+
+    assert response.status_code == 200
+    assert response_payload["ok"] is True
+    assert result_payload["status"] == "needs_review"
+    assert result_payload["can_transform_rows"] is False
+    assert result_payload["row_shape_validated"] is True
+    assert result_payload["row_data_validated"] is True
+    assert result_payload["required_values_checked"] is True
+    assert result_payload["required_value_errors"] == [expected_error]
+    assert result_payload["errors"] == [expected_error]
+    assert result_payload["row_semantics_validated"] is False
 
 
 @pytest.mark.parametrize(

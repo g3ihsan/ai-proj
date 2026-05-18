@@ -572,7 +572,10 @@ def test_csv_row_transformation_preview_maps_sample_rows_without_solving() -> No
     assert preview["row_count"] == 2
     assert preview["previewed_row_count"] == 2
     assert preview["can_transform_rows"] is True
+    assert preview["row_shape_validated"] is True
     assert preview["row_data_validated"] is True
+    assert preview["required_values_checked"] is True
+    assert preview["required_value_errors"] == []
     assert preview["row_semantics_validated"] is False
     assert preview["uses_external_llm"] is False
     assert preview["will_mutate_files"] is False
@@ -632,6 +635,62 @@ def test_csv_row_transformation_preview_uses_valid_apply_plan() -> None:
         "role": "worker",
         "required": "2",
     }
+    assert preview["row_shape_validated"] is True
+    assert preview["required_values_checked"] is True
+    assert preview["required_value_errors"] == []
+
+
+def test_csv_row_transformation_preview_reports_blank_required_values() -> None:
+    preview = csv_row_transformation_preview(
+        csv_type="demand",
+        headers=["Day", "Shift", "Role", "Required"],
+        rows=[["0", "morning", " ", "2"]],
+    )
+
+    expected_error = {
+        "row_index": 0,
+        "type": "missing_required_value",
+        "field": "role",
+        "target_header": "role",
+        "message": "Row 0 missing required value for role",
+    }
+    assert preview["status"] == "needs_review"
+    assert preview["can_transform_rows"] is False
+    assert preview["row_shape_validated"] is True
+    assert preview["row_data_validated"] is True
+    assert preview["required_values_checked"] is True
+    assert preview["required_value_errors"] == [expected_error]
+    assert preview["errors"] == [expected_error]
+    assert preview["row_semantics_validated"] is False
+
+
+def test_csv_row_transformation_preview_reports_blank_availability_values() -> None:
+    preview = csv_row_transformation_preview(
+        csv_type="employees",
+        headers=[
+            "Staff ID",
+            "Full Name",
+            "Skills",
+            "Hourly Rate",
+            "Weekly Hours Limit",
+            "Available Day0 Shift0",
+        ],
+        rows=[["E1", "Asha", "worker", "20", "40", ""]],
+    )
+
+    expected_error = {
+        "row_index": 0,
+        "type": "missing_required_value",
+        "field": "availability",
+        "target_header": "available_day0_shift0",
+        "message": "Row 0 missing required value for available_day0_shift0",
+    }
+    assert preview["status"] == "needs_review"
+    assert preview["can_transform_rows"] is False
+    assert preview["apply_plan"]["can_apply"] is True
+    assert preview["row_shape_validated"] is True
+    assert preview["required_value_errors"] == [expected_error]
+    assert preview["errors"] == [expected_error]
 
 
 def test_csv_row_transformation_preview_marks_review_required_availability() -> None:
