@@ -831,6 +831,7 @@ def test_csv_canonical_export_preview_builds_in_memory_csv() -> None:
     assert preview["status"] == "complete"
     assert preview["csv_type"] == "demand"
     assert preview["can_export"] is True
+    assert preview["export_ready_reason"] == "ready"
     assert preview["canonical_headers"] == ["day", "shift", "role", "required"]
     assert preview["canonical_rows"] == [["0", "morning", "worker", "2"]]
     assert preview["csv_text"] == "day,shift,role,required\n0,morning,worker,2\n"
@@ -868,6 +869,7 @@ def test_csv_canonical_export_preview_marks_incomplete_mapping_needs_review() ->
 
     assert preview["status"] == "needs_review"
     assert preview["can_export"] is False
+    assert preview["export_ready_reason"] == "row_preview_needs_review"
     assert preview["canonical_headers"] == [
         "employee_id",
         "name",
@@ -901,6 +903,7 @@ def test_csv_canonical_export_preview_attaches_row_errors() -> None:
 
     assert preview["status"] == "needs_review"
     assert preview["can_export"] is False
+    assert preview["export_ready_reason"] == "row_errors"
     assert preview["canonical_rows"] == [["0", "morning", "", "2"]]
     assert preview["csv_text"] == "day,shift,role,required\n0,morning,,2\n"
     assert preview["errors"] == [expected_error]

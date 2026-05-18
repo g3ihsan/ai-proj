@@ -22,6 +22,9 @@ APPLY_REASON_REQUIRES_REVIEW = "requires_review"
 APPLY_REASON_DUPLICATE_TARGET_HEADERS = "duplicate_target_headers"
 ROW_STATUS_READY = "ready"
 ROW_STATUS_NEEDS_REVIEW = "needs_review"
+EXPORT_READY_REASON_READY = "ready"
+EXPORT_READY_REASON_ROW_ERRORS = "row_errors"
+EXPORT_READY_REASON_ROW_PREVIEW_NEEDS_REVIEW = "row_preview_needs_review"
 DAY_NAME_TOKENS = {
     "mon",
     "monday",
@@ -395,6 +398,10 @@ def csv_canonical_export_preview(
         and row_preview["can_transform_rows"] is True
         and not row_preview["errors"]
     )
+    export_ready_reason = _export_ready_reason(
+        row_preview=row_preview,
+        can_export=can_export,
+    )
     return {
         "type": "csv_canonical_export_preview",
         "csv_mapping_contract_version": CSV_MAPPING_CONTRACT_VERSION,
@@ -404,6 +411,7 @@ def csv_canonical_export_preview(
         "row_count": row_preview["row_count"],
         "previewed_row_count": row_preview["previewed_row_count"],
         "can_export": can_export,
+        "export_ready_reason": export_ready_reason,
         "canonical_headers": canonical_headers,
         "canonical_rows": canonical_rows,
         "csv_text": csv_text,
@@ -465,6 +473,18 @@ def validate_export_preview_request(payload: Mapping[str, Any]) -> dict[str, Any
     except CsvMappingValidationError as exc:
         message = str(exc).replace("CSV row preview request", "CSV export preview request")
         raise CsvMappingValidationError(message) from exc
+
+
+def _export_ready_reason(
+    *,
+    row_preview: Mapping[str, Any],
+    can_export: bool,
+) -> str:
+    if can_export:
+        return EXPORT_READY_REASON_READY
+    if row_preview.get("errors"):
+        return EXPORT_READY_REASON_ROW_ERRORS
+    return EXPORT_READY_REASON_ROW_PREVIEW_NEEDS_REVIEW
 
 
 def csv_row_transformation_preview(

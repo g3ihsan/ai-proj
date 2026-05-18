@@ -1040,6 +1040,7 @@ def test_api_csv_canonical_export_preview_returns_deterministic_csv() -> None:
     assert result_payload["type"] == "csv_canonical_export_preview"
     assert result_payload["status"] == "complete"
     assert result_payload["can_export"] is True
+    assert result_payload["export_ready_reason"] == "ready"
     assert result_payload["canonical_headers"] == ["day", "shift", "role", "required"]
     assert result_payload["canonical_rows"] == [["0", "morning", "worker", "2"]]
     assert result_payload["csv_text"] == "day,shift,role,required\n0,morning,worker,2\n"
@@ -1077,9 +1078,38 @@ def test_api_csv_canonical_export_preview_reports_row_errors() -> None:
     assert response_payload["ok"] is True
     assert result_payload["status"] == "needs_review"
     assert result_payload["can_export"] is False
+    assert result_payload["export_ready_reason"] == "row_errors"
     assert result_payload["csv_text"] == "day,shift,role,required\n0,morning,,2\n"
     assert result_payload["errors"] == [expected_error]
     assert result_payload["row_preview"]["errors"] == [expected_error]
+
+
+def test_api_csv_canonical_export_preview_reports_incomplete_mapping_reason() -> None:
+    response = _api_request(
+        "POST",
+        "/csv/mapping/export/preview",
+        json_payload={
+            "csv_type": "employees",
+            "headers": ["Staff ID", "Full Name", "Skills", "Cost Per Hour"],
+            "rows": [["E1", "Asha", "worker", "20"]],
+            "mapping": {
+                "employee_id": "Staff ID",
+                "name": "Full Name",
+                "roles": "Skills",
+                "hourly_cost": "Cost Per Hour",
+            },
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["status"] == "needs_review"
+    assert result_payload["can_export"] is False
+    assert result_payload["export_ready_reason"] == "row_preview_needs_review"
+    assert result_payload["row_preview"]["apply_plan"]["reason"] == (
+        "missing_required_fields"
+    )
+    assert result_payload["errors"] == []
 
 
 def test_api_csv_canonical_export_preview_escapes_csv_text() -> None:
@@ -1104,6 +1134,7 @@ def test_api_csv_canonical_export_preview_escapes_csv_text() -> None:
     assert response.status_code == 200
     assert result_payload["status"] == "complete"
     assert result_payload["can_export"] is True
+    assert result_payload["export_ready_reason"] == "ready"
     assert result_payload["csv_text"] == (
         "employee_id,name,roles,hourly_cost,max_weekly_hours,available_day0_shift0\n"
         'E1,"Asha, ""Lead""\n'

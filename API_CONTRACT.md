@@ -923,6 +923,7 @@ Response:
     "row_count": 1,
     "previewed_row_count": 1,
     "can_export": true,
+    "export_ready_reason": "ready",
     "canonical_headers": ["day", "shift", "role", "required"],
     "canonical_rows": [["0", "morning", "worker", "2"]],
     "csv_text": "day,shift,role,required\n0,morning,worker,2\n",
@@ -948,8 +949,10 @@ Response:
 rows are ready, and no preview errors exist. Incomplete mappings or row-level
 preview errors still return deterministic `canonical_headers`, `canonical_rows`,
 and `csv_text` for inspection, but set `status=needs_review` and
-`can_export=false`. `will_write_files=false` and `will_mutate_files=false`
-mean the endpoint only returns preview data and CSV text in the response.
+`can_export=false`. `export_ready_reason` is a stable code: `ready`,
+`row_preview_needs_review`, or `row_errors`. `will_write_files=false` and
+`will_mutate_files=false` mean the endpoint only returns preview data and CSV
+text in the response.
 `row_semantics_validated=false` still means the strict CSV adapter remains
 responsible for parsing integers, booleans, roles, and availability semantics
 before anything can reach the solver.
