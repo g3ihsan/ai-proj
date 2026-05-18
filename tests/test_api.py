@@ -329,6 +329,9 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "recommend_what_if": "POST /recommend/what-if",
             "csv_mapping_suggest": "POST /csv/mapping/suggest",
             "csv_mapping_preview": "POST /csv/mapping/preview",
+            "csv_row_transformation_preview": (
+                "POST /csv/mapping/rows/preview"
+            ),
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -349,7 +352,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "uses_external_llm": False,
             "response_shape": {
                 "ok": True,
-                "result": "CSV mapping report or preview",
+                "result": "CSV mapping report, preview, or row preview",
             },
         },
         "solve_options": {
@@ -869,6 +872,128 @@ def test_api_csv_mapping_preview_does_not_change_solve_csv_behavior() -> None:
     assert solve_csv_response.headers["content-type"].startswith("text/csv")
     rows = list(csv.DictReader(io.StringIO(solve_csv_response.text)))
     assert rows[0]["record_type"] == "metric"
+
+
+def test_api_csv_row_transformation_preview_returns_deterministic_rows() -> None:
+    payload = {
+        "csv_type": "employees",
+        "headers": ["Staff ID", "Full Name", "Skills", "Cost Per Hour"],
+        "rows": [
+            ["E1", "Asha", "worker|supervisor", "20"],
+            ["E2", "Ravi", "worker", "18"],
+        ],
+        "mapping": {
+            "employee_id": "Staff ID",
+            "name": "Full Name",
+            "roles": "Skills",
+            "hourly_cost": "Cost Per Hour",
+        },
+    }
+
+    first = _api_request(
+        "POST",
+        "/csv/mapping/rows/preview",
+        json_payload=payload,
+    )
+    second = _api_request(
+        "POST",
+        "/csv/mapping/rows/preview",
+        json_payload=payload,
+    )
+    response_payload = first.json()
+    result_payload = response_payload["result"]
+
+    assert first.status_code == 200
+    assert response_payload["ok"] is True
+    assert first.json() == second.json()
+    assert result_payload["type"] == "csv_row_transformation_preview"
+    assert result_payload["status"] == "needs_review"
+    assert result_payload["can_transform_rows"] is True
+    assert result_payload["row_data_validated"] is True
+    assert result_payload["row_semantics_validated"] is False
+    assert result_payload["will_mutate_files"] is False
+    assert result_payload["will_solve"] is False
+    assert result_payload["apply_plan"]["reason"] == "missing_required_fields"
+    assert result_payload["transformed_rows"][0]["transformed"] == {
+        "employee_id": "E1",
+        "name": "Asha",
+        "roles": "worker|supervisor",
+        "hourly_cost": "20",
+    }
+    assert result_payload["errors"] == []
+    json.dumps(response_payload, sort_keys=True)
+
+
+def test_api_csv_row_transformation_preview_accepts_apply_plan() -> None:
+    preview_response = _api_request(
+        "POST",
+        "/csv/mapping/preview",
+        json_payload={
+            "csv_type": "demand",
+            "headers": ["Day Index", "Shift Name", "Required Role", "Headcount"],
+        },
+    )
+    apply_plan = preview_response.json()["result"]["apply_plan"]
+
+    response = _api_request(
+        "POST",
+        "/csv/mapping/rows/preview",
+        json_payload={
+            "csv_type": "demand",
+            "headers": ["Day Index", "Shift Name", "Required Role", "Headcount"],
+            "rows": [["0", "morning", "worker", "2"]],
+            "apply_plan": apply_plan,
+        },
+    )
+    result_payload = response.json()["result"]
+
+    assert response.status_code == 200
+    assert result_payload["status"] == "complete"
+    assert result_payload["transformed_headers"] == ["day", "shift", "role", "required"]
+    assert result_payload["transformed_rows"][0]["transformed"] == {
+        "day": "0",
+        "shift": "morning",
+        "role": "worker",
+        "required": "2",
+    }
+
+
+@pytest.mark.parametrize(
+    ("json_payload", "message"),
+    [
+        ({}, "CSV row preview request csv_type must be a string"),
+        (
+            {"csv_type": "demand", "headers": ["Day"]},
+            "CSV row preview request must include rows",
+        ),
+        (
+            {"csv_type": "demand", "headers": ["Day"], "rows": []},
+            "rows must not be empty",
+        ),
+        (
+            {"csv_type": "demand", "headers": ["Day"], "rows": [["0", "extra"]]},
+            "row 0 has 2 cell(s), expected 1",
+        ),
+    ],
+)
+def test_api_csv_row_transformation_preview_rejects_invalid_requests(
+    json_payload: Dict[str, object],
+    message: str,
+) -> None:
+    response = _api_request(
+        "POST",
+        "/csv/mapping/rows/preview",
+        json_payload=json_payload,
+    )
+    response_payload = response.json()
+
+    assert response.status_code == 400
+    assert response_payload["ok"] is False
+    assert response_payload["error"] == {
+        "type": "CsvMappingValidationError",
+        "message": message,
+        "request_id": response.headers["x-request-id"],
+    }
 
 
 def test_api_serves_viewer_example_csv_files() -> None:

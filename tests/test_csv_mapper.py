@@ -10,14 +10,18 @@ from workforce_scheduling.csv_mapper import (
     build_apply_plan,
     csv_mapping_report,
     csv_mapping_preview,
+    csv_row_transformation_preview,
     mapping_confidence,
     normalize_header,
     preview_column_renames,
+    preview_transformed_rows,
     suggest_demand_column_mapping,
     suggest_employee_column_mapping,
     suggest_shift_column_mapping,
+    transform_row_with_apply_plan,
     validate_apply_plan,
     validate_mapping,
+    validate_row_preview_request,
 )
 
 
@@ -535,6 +539,181 @@ def test_csv_mapping_preview_validates_supplied_mapping_report() -> None:
             csv_type="demand",
             headers=headers,
             mapping_report=duplicate_source_report,
+        )
+
+
+def test_csv_row_transformation_preview_maps_sample_rows_without_solving() -> None:
+    headers = ["Staff ID", "Full Name", "Skills", "Cost Per Hour"]
+    rows = [
+        ["E1", "Asha", "worker|supervisor", "20"],
+        ["E2", "Ravi", "worker", "18"],
+    ]
+
+    preview = csv_row_transformation_preview(
+        csv_type="employees",
+        headers=headers,
+        rows=rows,
+        mapping={
+            "employee_id": "Staff ID",
+            "name": "Full Name",
+            "roles": "Skills",
+            "hourly_cost": "Cost Per Hour",
+        },
+    )
+
+    assert preview["type"] == "csv_row_transformation_preview"
+    assert preview["status"] == "needs_review"
+    assert preview["csv_type"] == "employees"
+    assert preview["row_count"] == 2
+    assert preview["previewed_row_count"] == 2
+    assert preview["can_transform_rows"] is True
+    assert preview["row_data_validated"] is True
+    assert preview["row_semantics_validated"] is False
+    assert preview["uses_external_llm"] is False
+    assert preview["will_mutate_files"] is False
+    assert preview["will_solve"] is False
+    assert preview["apply_plan"]["reason"] == "missing_required_fields"
+    assert preview["transformed_headers"] == [
+        "employee_id",
+        "name",
+        "roles",
+        "hourly_cost",
+    ]
+    assert preview["transformed_rows"][0] == {
+        "row_index": 0,
+        "source": {
+            "Staff ID": "E1",
+            "Full Name": "Asha",
+            "Skills": "worker|supervisor",
+            "Cost Per Hour": "20",
+        },
+        "transformed": {
+            "employee_id": "E1",
+            "name": "Asha",
+            "roles": "worker|supervisor",
+            "hourly_cost": "20",
+        },
+        "transformed_values": ["E1", "Asha", "worker|supervisor", "20"],
+        "errors": [],
+    }
+    assert preview["errors"] == []
+    json.dumps(preview, sort_keys=True)
+    assert headers == ["Staff ID", "Full Name", "Skills", "Cost Per Hour"]
+    assert rows == [
+        ["E1", "Asha", "worker|supervisor", "20"],
+        ["E2", "Ravi", "worker", "18"],
+    ]
+
+
+def test_csv_row_transformation_preview_uses_valid_apply_plan() -> None:
+    headers = ["Day Index", "Shift Name", "Required Role", "Headcount"]
+    rows = [["0", "morning", "worker", "2"]]
+    apply_plan = build_apply_plan(csv_type="demand", headers=headers)
+
+    preview = csv_row_transformation_preview(
+        csv_type="demand",
+        headers=headers,
+        rows=rows,
+        apply_plan=apply_plan,
+    )
+
+    assert preview["status"] == "complete"
+    assert preview["can_transform_rows"] is True
+    assert preview["apply_plan"] == apply_plan
+    assert preview["transformed_headers"] == ["day", "shift", "role", "required"]
+    assert preview["transformed_rows"][0]["transformed"] == {
+        "day": "0",
+        "shift": "morning",
+        "role": "worker",
+        "required": "2",
+    }
+
+
+def test_csv_row_transformation_preview_marks_review_required_availability() -> None:
+    preview = csv_row_transformation_preview(
+        csv_type="employees",
+        headers=[
+            "Staff ID",
+            "Full Name",
+            "Skills",
+            "Hourly Rate",
+            "Weekly Hours Limit",
+            "Available Monday Morning",
+        ],
+        rows=[["E1", "Asha", "worker", "20", "40", "yes"]],
+    )
+
+    assert preview["status"] == "needs_review"
+    assert preview["can_transform_rows"] is False
+    assert preview["apply_plan"]["reason"] == "requires_review"
+    assert preview["transformed_headers"][-1] == "Available Monday Morning"
+    assert preview["transformed_rows"][0]["transformed"][
+        "Available Monday Morning"
+    ] == "yes"
+
+
+def test_csv_row_transformation_preview_rejects_invalid_rows() -> None:
+    with pytest.raises(CsvMappingValidationError, match="rows must not be empty"):
+        csv_row_transformation_preview(
+            csv_type="demand",
+            headers=["Day", "Shift", "Role", "Required"],
+            rows=[],
+        )
+    with pytest.raises(CsvMappingValidationError, match="row 0 has 1 cell"):
+        csv_row_transformation_preview(
+            csv_type="demand",
+            headers=["Day", "Shift"],
+            rows=[["0"]],
+        )
+    with pytest.raises(CsvMappingValidationError, match="row 0 must contain only strings"):
+        csv_row_transformation_preview(
+            csv_type="demand",
+            headers=["Day"],
+            rows=[[0]],  # type: ignore[list-item]
+        )
+
+
+def test_transform_row_with_apply_plan_reports_duplicate_targets() -> None:
+    headers = [
+        "Staff ID",
+        "Full Name",
+        "Skills",
+        "Hourly Rate",
+        "Weekly Hours Limit",
+        "Avail D0 S0",
+        "Available Day0 Shift0",
+    ]
+    apply_plan = build_apply_plan(csv_type="employees", headers=headers)
+
+    transformed = transform_row_with_apply_plan(
+        headers=headers,
+        row=["E1", "Asha", "worker", "20", "40", "yes", "no"],
+        apply_plan=apply_plan,
+    )
+    rows = preview_transformed_rows(
+        headers=headers,
+        rows=[["E1", "Asha", "worker", "20", "40", "yes", "no"]],
+        apply_plan=apply_plan,
+    )
+
+    assert transformed["errors"] == [
+        {
+            "row_index": 0,
+            "type": "duplicate_target_header",
+            "source_header": "Available Day0 Shift0",
+            "target_header": "available_day0_shift0",
+            "message": "Row 0 maps more than one source column to available_day0_shift0",
+        }
+    ]
+    assert rows == [transformed]
+
+
+def test_validate_row_preview_request_rejects_invalid_payload() -> None:
+    with pytest.raises(CsvMappingValidationError, match="must be an object"):
+        validate_row_preview_request([])  # type: ignore[arg-type]
+    with pytest.raises(CsvMappingValidationError, match="must include rows"):
+        validate_row_preview_request(
+            {"csv_type": "demand", "headers": ["Day"]}
         )
 
 

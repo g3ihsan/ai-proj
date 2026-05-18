@@ -786,6 +786,89 @@ reports with mismatched CSV type, unsupported fields, inconsistent
 `missing_fields`, duplicate source headers, or `uses_external_llm=true` return
 HTTP 400.
 
+### `POST /csv/mapping/rows/preview`
+
+Returns a deterministic sample row transformation preview for one CSV dataset.
+This endpoint applies a proposed mapping or validated apply plan to provided
+sample rows. It does not write files, mutate uploads, parse rows through
+`csv_adapter.py`, run `/solve-csv`, run the solver, or call an external
+LLM/API.
+
+Request:
+
+```json
+{
+  "csv_type": "employees",
+  "headers": ["Staff ID", "Full Name", "Skills", "Cost Per Hour"],
+  "rows": [
+    ["E1", "Asha", "worker|supervisor", "20"],
+    ["E2", "Ravi", "worker", "18"]
+  ],
+  "mapping": {
+    "employee_id": "Staff ID",
+    "name": "Full Name",
+    "roles": "Skills",
+    "hourly_cost": "Cost Per Hour"
+  }
+}
+```
+
+`mapping`, `mapping_report`, or `apply_plan` may be supplied. `apply_plan`
+inputs must already be complete and validated by the header preview contract.
+When `mapping` is partial, row transformation can still be previewed, but the
+response remains `status=needs_review` because the resulting CSV is not yet
+adapter-ready.
+
+Response:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "type": "csv_row_transformation_preview",
+    "csv_mapping_contract_version": 1,
+    "status": "needs_review",
+    "csv_type": "employees",
+    "row_count": 2,
+    "previewed_row_count": 2,
+    "can_transform_rows": true,
+    "row_data_validated": true,
+    "row_semantics_validated": false,
+    "uses_external_llm": false,
+    "will_mutate_files": false,
+    "will_solve": false,
+    "transformed_headers": ["employee_id", "name", "roles", "hourly_cost"],
+    "transformed_rows": [
+      {
+        "row_index": 0,
+        "source": {
+          "Staff ID": "E1",
+          "Full Name": "Asha",
+          "Skills": "worker|supervisor",
+          "Cost Per Hour": "20"
+        },
+        "transformed": {
+          "employee_id": "E1",
+          "name": "Asha",
+          "roles": "worker|supervisor",
+          "hourly_cost": "20"
+        },
+        "transformed_values": ["E1", "Asha", "worker|supervisor", "20"],
+        "errors": []
+      }
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}
+```
+
+Rows must be supplied as a non-empty array of string arrays with the same width
+as `headers`. Row preview validates row shape and string cells only;
+`row_semantics_validated=false` means integer fields, booleans, compact
+availability matrices, and role values are still validated later by the strict
+CSV adapter.
+
 ### `POST /solve-csv`
 
 Accepts three uploaded CSV files, solves through the same canonical JSON
@@ -1076,7 +1159,10 @@ contract below. The optional preview/apply-plan endpoint shows deterministic
 column rename actions, `canonical_headers_after_apply`, unmapped headers,
 missing fields, review warnings, `can_apply`, `reason`, header-scoped
 `adapter_readiness`, and explicit `will_mutate_files=false` /
-`will_solve=false` flags.
+`will_solve=false` flags. The row transformation preview applies those header
+plans to sample rows and reports transformed row dictionaries and row-shape
+errors, but it still does not parse rows through `csv_adapter.py`, write files,
+or solve schedules.
 
 ### `employees.csv`
 

@@ -362,6 +362,156 @@ def validate_mapping(mapping_report: Mapping[str, Any]) -> dict[str, Any]:
     return dict(mapping_report)
 
 
+def csv_row_transformation_preview(
+    *,
+    csv_type: str,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    mapping: Mapping[str, Any] | None = None,
+    mapping_report: Mapping[str, Any] | None = None,
+    apply_plan: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    headers = _validated_headers(headers)
+    rows = _validated_rows(rows, len(headers))
+    apply_plan_payload = _row_preview_apply_plan(
+        csv_type=csv_type,
+        headers=headers,
+        mapping=mapping,
+        mapping_report=mapping_report,
+        apply_plan=apply_plan,
+    )
+    transformed_rows = preview_transformed_rows(
+        headers=headers,
+        rows=rows,
+        apply_plan=apply_plan_payload,
+    )
+    row_errors = [
+        error
+        for transformed_row in transformed_rows
+        for error in transformed_row["errors"]
+    ]
+    unresolved_actions = [
+        action
+        for action in apply_plan_payload["column_renames"]
+        if action["action"] == APPLY_ACTION_REVIEW
+    ]
+    can_transform_rows = not row_errors and not unresolved_actions and (
+        apply_plan_payload["reason"] != APPLY_REASON_DUPLICATE_TARGET_HEADERS
+    )
+    status = (
+        "complete"
+        if apply_plan_payload["can_apply"] and can_transform_rows
+        else "needs_review"
+    )
+    return {
+        "type": "csv_row_transformation_preview",
+        "csv_mapping_contract_version": CSV_MAPPING_CONTRACT_VERSION,
+        "status": status,
+        "csv_type": csv_type,
+        "headers": headers,
+        "row_count": len(rows),
+        "previewed_row_count": len(transformed_rows),
+        "can_transform_rows": can_transform_rows,
+        "row_data_validated": True,
+        "row_semantics_validated": False,
+        "uses_external_llm": False,
+        "will_mutate_files": False,
+        "will_solve": False,
+        "apply_plan": apply_plan_payload,
+        "transformed_headers": apply_plan_payload["canonical_headers_after_apply"],
+        "transformed_rows": transformed_rows,
+        "errors": row_errors,
+        "warnings": list(apply_plan_payload["warnings"]),
+    }
+
+
+def preview_transformed_rows(
+    *,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    apply_plan: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        transform_row_with_apply_plan(
+            headers=headers,
+            row=row,
+            apply_plan=apply_plan,
+            row_index=row_index,
+        )
+        for row_index, row in enumerate(rows)
+    ]
+
+
+def transform_row_with_apply_plan(
+    *,
+    headers: Sequence[str],
+    row: Sequence[str],
+    apply_plan: Mapping[str, Any],
+    row_index: int = 0,
+) -> dict[str, Any]:
+    target_by_source = {
+        action["source_header"]: action["target_header"]
+        for action in apply_plan["column_renames"]
+        if action.get("target_header") is not None
+    }
+    source = {
+        header: value
+        for header, value in zip(headers, row)
+    }
+    transformed: dict[str, str] = {}
+    errors: list[dict[str, Any]] = []
+    for header, value in zip(headers, row):
+        target_header = target_by_source.get(header, header)
+        if target_header in transformed:
+            errors.append(
+                {
+                    "row_index": row_index,
+                    "type": "duplicate_target_header",
+                    "source_header": header,
+                    "target_header": target_header,
+                    "message": (
+                        f"Row {row_index} maps more than one source column "
+                        f"to {target_header}"
+                    ),
+                }
+            )
+            continue
+        transformed[target_header] = value
+    transformed_values = [
+        transformed.get(header, "")
+        for header in apply_plan["canonical_headers_after_apply"]
+    ]
+    return {
+        "row_index": row_index,
+        "source": source,
+        "transformed": transformed,
+        "transformed_values": transformed_values,
+        "errors": errors,
+    }
+
+
+def validate_row_preview_request(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise CsvMappingValidationError("CSV row preview request must be an object")
+    csv_type = payload.get("csv_type")
+    if not isinstance(csv_type, str) or not csv_type.strip():
+        raise CsvMappingValidationError(
+            "CSV row preview request csv_type must be a string"
+        )
+    if "headers" not in payload:
+        raise CsvMappingValidationError("CSV row preview request must include headers")
+    if "rows" not in payload:
+        raise CsvMappingValidationError("CSV row preview request must include rows")
+    return {
+        "csv_type": csv_type.strip(),
+        "headers": payload["headers"],
+        "rows": payload["rows"],
+        "mapping": payload.get("mapping"),
+        "mapping_report": payload.get("mapping_report"),
+        "apply_plan": payload.get("apply_plan"),
+    }
+
+
 def csv_mapping_preview(
     *,
     csv_type: str,
@@ -644,6 +794,54 @@ def _canonical_fields_for_csv_type(csv_type: Any) -> tuple[str, ...]:
     if csv_type == CSV_TYPE_SHIFTS:
         return SHIFT_CANONICAL_FIELDS
     raise CsvMappingValidationError(f"Unsupported CSV mapping csv_type {csv_type}")
+
+
+def _row_preview_apply_plan(
+    *,
+    csv_type: str,
+    headers: Sequence[str],
+    mapping: Mapping[str, Any] | None,
+    mapping_report: Mapping[str, Any] | None,
+    apply_plan: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if apply_plan is not None:
+        if mapping is not None or mapping_report is not None:
+            raise CsvMappingValidationError(
+                "Provide either apply_plan or mapping inputs, not both"
+            )
+        validated_apply_plan = validate_apply_plan(apply_plan)
+        if validated_apply_plan["csv_type"] != csv_type:
+            raise CsvMappingValidationError("apply_plan csv_type does not match")
+        _ensure_apply_plan_sources_exist(headers, validated_apply_plan)
+        return validated_apply_plan
+    return build_apply_plan(
+        csv_type=csv_type,
+        headers=headers,
+        mapping=mapping,
+        mapping_report=mapping_report,
+    )
+
+
+def _ensure_apply_plan_sources_exist(
+    headers: Sequence[str],
+    apply_plan: Mapping[str, Any],
+) -> None:
+    target_by_source: dict[str, str] = {}
+    for action in apply_plan["column_renames"]:
+        source_header = action.get("source_header")
+        if not isinstance(source_header, str) or source_header not in headers:
+            raise CsvMappingValidationError(
+                f"apply_plan references unknown source header {source_header}"
+            )
+        target_header = action.get("target_header")
+        if isinstance(target_header, str):
+            target_by_source[source_header] = target_header
+    expected_headers_after_apply = [
+        target_by_source.get(header, header)
+        for header in headers
+    ]
+    if apply_plan.get("canonical_headers_after_apply") != expected_headers_after_apply:
+        raise CsvMappingValidationError("apply_plan headers do not match request headers")
 
 
 def _column_mapping_report(
@@ -1121,6 +1319,32 @@ def _validated_headers(headers: Sequence[str]) -> list[str]:
             "headers contain duplicate normalized values: " + ", ".join(duplicates)
         )
     return list(headers)
+
+
+def _validated_rows(
+    rows: Sequence[Sequence[str]],
+    expected_width: int,
+) -> list[list[str]]:
+    if isinstance(rows, str) or not isinstance(rows, Sequence):
+        raise CsvMappingValidationError("rows must be a sequence of row lists")
+    if not rows:
+        raise CsvMappingValidationError("rows must not be empty")
+    validated_rows: list[list[str]] = []
+    for row_index, row in enumerate(rows):
+        if isinstance(row, str) or not isinstance(row, Sequence):
+            raise CsvMappingValidationError(
+                f"row {row_index} must be a sequence of strings"
+            )
+        if len(row) != expected_width:
+            raise CsvMappingValidationError(
+                f"row {row_index} has {len(row)} cell(s), expected {expected_width}"
+            )
+        if not all(isinstance(value, str) for value in row):
+            raise CsvMappingValidationError(
+                f"row {row_index} must contain only strings"
+            )
+        validated_rows.append(list(row))
+    return validated_rows
 
 
 def _best_header_match(
