@@ -23,4 +23,5 @@ suggestions, apply-plan previews, sample row transformations, and canonical CSV
 export text from the backend. It does not write files, does not call
 `/solve-csv`, and does not submit mapped CSVs to the solver. Empty header cells
 and sample rows that do not match the header length are rejected in the viewer
-before a mapping preview request is sent.
+before a mapping preview request is sent. The canonical CSV copy action copies
+only the in-memory export preview text from the browser.

@@ -81,6 +81,7 @@ const exportPreviewEmptyState =
 
 const state = {
   activeTab: "assignments",
+  canonicalCsvText: "",
   csvText: "",
   demoCsvFiles: {},
   isBusy: false,
@@ -117,6 +118,7 @@ const elements = {
   previewApplyPlan: document.querySelector("#preview-apply-plan"),
   previewRowTransform: document.querySelector("#preview-row-transform"),
   previewExport: document.querySelector("#preview-export"),
+  copyCanonicalCsv: document.querySelector("#copy-canonical-csv"),
   mappingSummary: document.querySelector("#mapping-summary"),
   mappingOutput: document.querySelector("#mapping-output"),
   exportOutput: document.querySelector("#export-output"),
@@ -171,10 +173,15 @@ function setBusy(isBusy, statusText = "") {
     button.disabled = isBusy;
   });
   elements.downloadCsv.disabled = isBusy || !state.csvText;
+  updateCopyCsvButton();
   elements.serviceDot.classList.toggle("busy", isBusy);
   if (statusText) {
     elements.serviceStatus.textContent = statusText;
   }
+}
+
+function updateCopyCsvButton() {
+  elements.copyCanonicalCsv.disabled = state.isBusy || !state.canonicalCsvText;
 }
 
 async function withBusy(statusText, operation) {
@@ -590,8 +597,14 @@ function clearMappingWizard() {
   elements.mappingJson.value = "";
   elements.mappingSummary.innerHTML = "";
   elements.mappingOutput.textContent = "";
-  elements.exportOutput.textContent = "";
+  setCanonicalCsvText("");
   log("CSV mapping wizard cleared.");
+}
+
+function setCanonicalCsvText(csvText) {
+  state.canonicalCsvText = csvText || "";
+  elements.exportOutput.textContent = state.canonicalCsvText || exportPreviewEmptyState;
+  updateCopyCsvButton();
 }
 
 function validateMappingHeaders(headers) {
@@ -683,7 +696,7 @@ function renderMappingResult(label, payload) {
     metricCard("Reason", reason),
   ].join("");
   elements.mappingOutput.textContent = JSON.stringify(payload, null, 2);
-  elements.exportOutput.textContent = result.csv_text || exportPreviewEmptyState;
+  setCanonicalCsvText(result.csv_text || "");
   log(label, {
     type: result.type || "",
     status,
@@ -691,6 +704,19 @@ function renderMappingResult(label, payload) {
     will_solve: result.will_solve ?? false,
     will_write_files: result.will_write_files ?? false,
   });
+}
+
+async function copyCanonicalCsv() {
+  if (!state.canonicalCsvText) {
+    log("No canonical CSV export preview to copy.");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(state.canonicalCsvText);
+    log("Canonical CSV copied.");
+  } catch (error) {
+    logError("Canonical CSV copy failed", error);
+  }
 }
 
 async function postJson(path, payload) {
@@ -868,6 +894,7 @@ elements.clearMappingWizard.addEventListener("click", clearMappingWizard);
 elements.previewApplyPlan.addEventListener("click", previewApplyPlan);
 elements.previewRowTransform.addEventListener("click", previewRowTransform);
 elements.previewExport.addEventListener("click", previewCanonicalExport);
+elements.copyCanonicalCsv.addEventListener("click", copyCanonicalCsv);
 elements.solveJson.addEventListener("click", solveJson);
 elements.solveCsv.addEventListener("click", solveCsv);
 elements.submitJob.addEventListener("click", submitJob);
