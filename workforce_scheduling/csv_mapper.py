@@ -417,6 +417,7 @@ def csv_canonical_export_preview(
         "row_semantics_validated": row_preview["row_semantics_validated"],
         "uses_external_llm": False,
         "will_mutate_files": False,
+        "will_write_files": False,
         "will_solve": False,
     }
 

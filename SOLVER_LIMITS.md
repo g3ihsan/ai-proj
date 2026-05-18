@@ -79,9 +79,10 @@ columns with row-level `ready` or `needs_review` status, returns
 adapter remains the only path into the solver.
 `POST /csv/mapping/export/preview` renders those previewed canonical headers and
 rows as in-memory CSV text only. It uses the same 20-row preview limit, reports
-`can_export=false` when the mapping or rows need review, does not write files,
-does not call `/solve-csv`, and does not parse rows into `ProblemData`; the
-strict CSV adapter remains the only path into the solver.
+`can_export=false` when the mapping or rows need review, returns
+`will_write_files=false`, does not write files, does not call `/solve-csv`, and
+does not parse rows into `ProblemData`; the strict CSV adapter remains the only
+path into the solver.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.

@@ -843,6 +843,7 @@ def test_csv_canonical_export_preview_builds_in_memory_csv() -> None:
     assert preview["row_semantics_validated"] is False
     assert preview["uses_external_llm"] is False
     assert preview["will_mutate_files"] is False
+    assert preview["will_write_files"] is False
     assert preview["will_solve"] is False
     assert preview["errors"] == []
     assert preview["row_preview"]["type"] == "csv_row_transformation_preview"
@@ -922,11 +923,42 @@ def test_canonical_csv_rows_from_preview_validates_shape() -> None:
 
 def test_build_canonical_csv_preview_quotes_values_deterministically() -> None:
     csv_text = build_canonical_csv_preview(
-        headers=["name", "roles"],
-        rows=[["Asha, Lead", "worker|supervisor"]],
+        headers=["name", "roles", "notes"],
+        rows=[['Asha, "Lead"', "worker|supervisor", "Line 1\nLine 2"]],
     )
 
-    assert csv_text == 'name,roles\n"Asha, Lead",worker|supervisor\n'
+    assert csv_text == (
+        'name,roles,notes\n'
+        '"Asha, ""Lead""",worker|supervisor,"Line 1\n'
+        'Line 2"\n'
+    )
+
+
+def test_csv_canonical_export_preview_escapes_csv_text() -> None:
+    preview = csv_canonical_export_preview(
+        csv_type="employees",
+        headers=[
+            "Staff ID",
+            "Full Name",
+            "Skills",
+            "Hourly Rate",
+            "Weekly Hours Limit",
+            "Available Day0 Shift0",
+        ],
+        rows=[['E1', 'Asha, "Lead"\nNight', "worker", "20", "40", "yes"]],
+    )
+
+    assert preview["status"] == "complete"
+    assert preview["can_export"] is True
+    assert preview["canonical_rows"] == [
+        ["E1", 'Asha, "Lead"\nNight', "worker", "20", "40", "yes"]
+    ]
+    assert preview["csv_text"] == (
+        "employee_id,name,roles,hourly_cost,max_weekly_hours,available_day0_shift0\n"
+        'E1,"Asha, ""Lead""\n'
+        'Night",worker,20,40,yes\n'
+    )
+    assert preview["will_write_files"] is False
 
 
 def test_validate_export_preview_request_rejects_invalid_payload() -> None:

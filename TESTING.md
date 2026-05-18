@@ -85,9 +85,10 @@ no solving, and `row_semantics_validated=false` because `csv_adapter.py`
 remains the strict parser.
 `POST /csv/mapping/export/preview` covers deterministic in-memory canonical CSV
 rendering from that row preview. Tests assert canonical headers, canonical row
-values, CSV quoting, deterministic output, row-error propagation,
-`can_export=false` for incomplete or invalid previews, JSON serializability, no
-file mutation, no solving, and `row_semantics_validated=false`.
+values, CSV quoting for commas, quotes, and embedded newlines, deterministic
+output, row-error propagation, `will_write_files=false`, `can_export=false` for
+incomplete or invalid previews, JSON serializability, no file mutation, no
+solving, and `row_semantics_validated=false`.
 
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:
