@@ -498,6 +498,8 @@ def test_api_serves_static_roster_viewer() -> None:
     assert "suggestCsvMapping" in app_js_response.text
     assert "clearMappingWizard" in app_js_response.text
     assert "previewCanonicalExport" in app_js_response.text
+    assert 'metricCard("Can export", canExport)' in app_js_response.text
+    assert 'metricCard("Reason", reason)' in app_js_response.text
     assert "/csv/mapping/export/preview" in app_js_response.text
     assert "CSV export preview loaded" in app_js_response.text
     assert "CSV mapping wizard cleared." in app_js_response.text
@@ -508,6 +510,7 @@ def test_api_serves_static_roster_viewer() -> None:
     assert ".helper-text" in styles_response.text
     assert ".compact-field" in styles_response.text
     assert ".status-dot.busy" in styles_response.text
+    assert ".wizard-summary" in styles_response.text
     assert ".preview-box" in styles_response.text
 
 

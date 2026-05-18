@@ -656,7 +656,8 @@ function renderMappingResult(label, payload) {
     metricCard("Status", status),
     metricCard("Can apply", canApply),
     metricCard("Can transform", canTransform),
-    metricCard("Can export", canExport || reason),
+    metricCard("Can export", canExport),
+    metricCard("Reason", reason),
   ].join("");
   elements.mappingOutput.textContent = JSON.stringify(payload, null, 2);
   elements.exportOutput.textContent = result.csv_text || "";
