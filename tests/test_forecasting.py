@@ -50,6 +50,12 @@ def test_forecast_response_uses_deterministic_historical_average() -> None:
         "historical_record_limit_reached": False,
         "forecast_slot_limit_reached": False,
     }
+    assert response["fallback_policy"] == {
+        "missing_exact_history": "default_required_to_0",
+        "uses_shift_role_fallback": False,
+        "uses_role_fallback": False,
+        "uses_global_fallback": False,
+    }
     assert response["horizon"] == {
         "days": [0],
         "shifts": [0, 1, 2],
@@ -64,6 +70,14 @@ def test_forecast_response_uses_deterministic_historical_average() -> None:
             "mean_required": 3.0,
             "observation_count": 2,
             "historical_values": [2, 4],
+            "confidence": "medium",
+            "basis": {
+                "method": "historical_average",
+                "match_level": "exact_day_shift_role",
+                "observation_count": 2,
+                "mean_required": 3.0,
+                "fallback_used": False,
+            },
         },
         {
             "day": 0,
@@ -73,6 +87,14 @@ def test_forecast_response_uses_deterministic_historical_average() -> None:
             "mean_required": 2.0,
             "observation_count": 2,
             "historical_values": [1, 3],
+            "confidence": "medium",
+            "basis": {
+                "method": "historical_average",
+                "match_level": "exact_day_shift_role",
+                "observation_count": 2,
+                "mean_required": 2.0,
+                "fallback_used": False,
+            },
         },
         {
             "day": 0,
@@ -82,6 +104,15 @@ def test_forecast_response_uses_deterministic_historical_average() -> None:
             "mean_required": 0.0,
             "observation_count": 0,
             "historical_values": [],
+            "confidence": "low",
+            "basis": {
+                "method": "historical_average",
+                "match_level": "none",
+                "observation_count": 0,
+                "mean_required": 0.0,
+                "fallback_used": True,
+                "fallback_reason": "no_exact_history",
+            },
         },
     ]
     assert response["diagnostics"]["baseline_window_periods"] == [0, 1]
@@ -121,11 +152,104 @@ def test_forecast_response_derives_horizon_from_history_when_omitted() -> None:
     assert [row["required"] for row in response["forecast"]] == [3, 2]
 
 
+def test_forecast_response_is_deterministic_and_json_serializable() -> None:
+    response = forecast_response_from_request(_forecast_request())
+    second_response = forecast_response_from_request(_forecast_request())
+
+    assert response == second_response
+    json.dumps(response)
+
+
+def test_forecast_confidence_levels_are_deterministic() -> None:
+    payload = {
+        "historical_demand": [
+            {
+                "period": period,
+                "day": 0,
+                "shift": 0,
+                "role": "worker",
+                "required": 4,
+            }
+            for period in range(4)
+        ]
+        + [
+            {
+                "period": period,
+                "day": 0,
+                "shift": 1,
+                "role": "worker",
+                "required": 2,
+            }
+            for period in range(2)
+        ]
+        + [
+            {
+                "period": 0,
+                "day": 0,
+                "shift": 2,
+                "role": "worker",
+                "required": 1,
+            }
+        ],
+        "horizon": {
+            "days": [0],
+            "shifts": [0, 1, 2, 3],
+            "roles": ["worker"],
+        },
+    }
+
+    response = forecast_response_from_request(payload)
+
+    rows_by_shift = {
+        row["shift"]: row
+        for row in response["forecast"]
+    }
+    assert rows_by_shift[0]["confidence"] == "high"
+    assert rows_by_shift[0]["basis"] == {
+        "method": "historical_average",
+        "match_level": "exact_day_shift_role",
+        "observation_count": 4,
+        "mean_required": 4.0,
+        "fallback_used": False,
+    }
+    assert rows_by_shift[1]["confidence"] == "medium"
+    assert rows_by_shift[1]["basis"]["observation_count"] == 2
+    assert rows_by_shift[1]["basis"]["fallback_used"] is False
+    assert rows_by_shift[2]["confidence"] == "low"
+    assert rows_by_shift[2]["basis"]["observation_count"] == 1
+    assert rows_by_shift[2]["basis"]["fallback_used"] is False
+    assert rows_by_shift[3]["confidence"] == "low"
+    assert rows_by_shift[3]["basis"] == {
+        "method": "historical_average",
+        "match_level": "none",
+        "observation_count": 0,
+        "mean_required": 0.0,
+        "fallback_used": True,
+        "fallback_reason": "no_exact_history",
+    }
+
+
 @pytest.mark.parametrize(
     ("payload", "message"),
     [
+        ([], "Forecast request must be an object"),
         ({}, "historical_demand must be a list"),
         ({"historical_demand": []}, "historical_demand must not be empty"),
+        (
+            {
+                "method": "",
+                "historical_demand": [
+                    {
+                        "period": 0,
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 1,
+                    }
+                ],
+            },
+            "Forecast method must be a non-empty string",
+        ),
         (
             {
                 "historical_demand": [
@@ -139,6 +263,48 @@ def test_forecast_response_derives_horizon_from_history_when_omitted() -> None:
                 ]
             },
             "historical_demand[0].period must be an integer",
+        ),
+        (
+            {
+                "historical_demand": [
+                    {
+                        "period": 0,
+                        "day": True,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 1,
+                    }
+                ]
+            },
+            "historical_demand[0].day must be an integer",
+        ),
+        (
+            {
+                "historical_demand": [
+                    {
+                        "period": 0,
+                        "day": 0,
+                        "shift": True,
+                        "role": "worker",
+                        "required": 1,
+                    }
+                ]
+            },
+            "historical_demand[0].shift must be an integer",
+        ),
+        (
+            {
+                "historical_demand": [
+                    {
+                        "period": 0,
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": True,
+                    }
+                ]
+            },
+            "historical_demand[0].required must be an integer",
         ),
         (
             {
@@ -222,6 +388,63 @@ def test_forecast_response_derives_horizon_from_history_when_omitted() -> None:
                 },
             },
             "Forecast horizon produces 200 slot(s); maximum is 100",
+        ),
+        (
+            {
+                "historical_demand": [
+                    {
+                        "period": 0,
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 1,
+                    }
+                ],
+                "horizon": {
+                    "days": [True],
+                    "shifts": [0],
+                    "roles": ["worker"],
+                },
+            },
+            "horizon.days must be an integer",
+        ),
+        (
+            {
+                "historical_demand": [
+                    {
+                        "period": 0,
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 1,
+                    }
+                ],
+                "horizon": {
+                    "days": [0],
+                    "shifts": [False],
+                    "roles": ["worker"],
+                },
+            },
+            "horizon.shifts must be an integer",
+        ),
+        (
+            {
+                "historical_demand": [
+                    {
+                        "period": 0,
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 1,
+                    }
+                ],
+                "horizon": {
+                    "days": [0],
+                    "shifts": [0],
+                    "roles": [""],
+                },
+            },
+            "Forecast horizon roles must contain non-empty strings",
         ),
         (
             {

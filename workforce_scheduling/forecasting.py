@@ -10,6 +10,9 @@ FORECAST_METHOD_HISTORICAL_AVERAGE = "historical_average"
 SUPPORTED_FORECAST_METHODS = (FORECAST_METHOD_HISTORICAL_AVERAGE,)
 MAX_HISTORICAL_DEMAND_RECORDS = 1000
 MAX_FORECAST_SLOTS = 100
+FORECAST_MATCH_EXACT = "exact_day_shift_role"
+FORECAST_MATCH_NONE = "none"
+FORECAST_FALLBACK_REASON_NO_EXACT_HISTORY = "no_exact_history"
 
 
 class ForecastingError(ValueError):
@@ -67,7 +70,26 @@ def baseline_demand_forecast(
                     else 0.0
                 )
                 forecast_required = _round_half_up(mean_required)
+                observation_count = len(values)
+                confidence = _forecast_confidence(observation_count)
+                rounded_mean_required = round(mean_required, 4)
+                fallback_used = observation_count == 0
+                match_level = (
+                    FORECAST_MATCH_NONE
+                    if fallback_used
+                    else FORECAST_MATCH_EXACT
+                )
+                basis: dict[str, Any] = {
+                    "method": method,
+                    "match_level": match_level,
+                    "observation_count": observation_count,
+                    "mean_required": rounded_mean_required,
+                    "fallback_used": fallback_used,
+                }
                 if not values:
+                    basis["fallback_reason"] = (
+                        FORECAST_FALLBACK_REASON_NO_EXACT_HISTORY
+                    )
                     missing_history_slots.append(
                         {
                             "day": key[0],
@@ -85,9 +107,11 @@ def baseline_demand_forecast(
                         "shift": key[1],
                         "role": key[2],
                         "required": forecast_required,
-                        "mean_required": round(mean_required, 4),
-                        "observation_count": len(values),
+                        "mean_required": rounded_mean_required,
+                        "observation_count": observation_count,
                         "historical_values": list(values),
+                        "confidence": confidence,
+                        "basis": basis,
                     }
                 )
 
@@ -111,6 +135,12 @@ def baseline_demand_forecast(
                 len(historical_records) >= MAX_HISTORICAL_DEMAND_RECORDS
             ),
             "forecast_slot_limit_reached": forecast_slot_count >= MAX_FORECAST_SLOTS,
+        },
+        "fallback_policy": {
+            "missing_exact_history": "default_required_to_0",
+            "uses_shift_role_fallback": False,
+            "uses_role_fallback": False,
+            "uses_global_fallback": False,
         },
         "horizon": {
             "days": list(horizon["days"]),
@@ -253,6 +283,14 @@ def _forecast_slot_count(horizon: Mapping[str, list[int] | list[str]]) -> int:
         * len(horizon["shifts"])
         * len(horizon["roles"])
     )
+
+
+def _forecast_confidence(observation_count: int) -> str:
+    if observation_count >= 4:
+        return "high"
+    if observation_count >= 2:
+        return "medium"
+    return "low"
 
 
 def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:

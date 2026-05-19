@@ -88,8 +88,11 @@ historical demand records by `day`, `shift`, and `role` across historical
 `period` values, returns diagnostics and metrics, uses no external ML/LLM, does
 not run the solver, does not call `/solve-csv`, and does not mutate canonical
 solve requests. Forecast requests are capped at 1000 historical demand records
-and 100 forecast slots. Missing horizon slots default to forecast demand `0` and
-are reported in diagnostics rather than invented.
+and 100 forecast slots. Missing horizon slots default to forecast demand `0`,
+are reported in diagnostics rather than invented, receive `confidence=low`, and
+carry basis metadata with `fallback_used=true` and
+`fallback_reason=no_exact_history`. Current forecasting does not use shift-role,
+role, or global fallback, and it never automatically changes solver demand.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.

@@ -606,6 +606,12 @@ def test_api_forecast_demand_returns_deterministic_baseline() -> None:
         "historical_record_limit_reached": False,
         "forecast_slot_limit_reached": False,
     }
+    assert result_payload["fallback_policy"] == {
+        "missing_exact_history": "default_required_to_0",
+        "uses_shift_role_fallback": False,
+        "uses_role_fallback": False,
+        "uses_global_fallback": False,
+    }
     assert result_payload["forecast"] == [
         {
             "day": 0,
@@ -615,6 +621,14 @@ def test_api_forecast_demand_returns_deterministic_baseline() -> None:
             "mean_required": 3.0,
             "observation_count": 2,
             "historical_values": [2, 4],
+            "confidence": "medium",
+            "basis": {
+                "method": "historical_average",
+                "match_level": "exact_day_shift_role",
+                "observation_count": 2,
+                "mean_required": 3.0,
+                "fallback_used": False,
+            },
         },
         {
             "day": 0,
@@ -624,6 +638,14 @@ def test_api_forecast_demand_returns_deterministic_baseline() -> None:
             "mean_required": 2.0,
             "observation_count": 2,
             "historical_values": [1, 3],
+            "confidence": "medium",
+            "basis": {
+                "method": "historical_average",
+                "match_level": "exact_day_shift_role",
+                "observation_count": 2,
+                "mean_required": 2.0,
+                "fallback_used": False,
+            },
         },
     ]
     assert result_payload["metrics"]["total_forecast_required"] == 5

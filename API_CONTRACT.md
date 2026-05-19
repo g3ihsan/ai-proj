@@ -993,7 +993,11 @@ that identifies the historical planning window. The initial supported method is
 observed historical days, shifts, and roles. Horizon slots with no matching
 history forecast `required=0` and are reported in diagnostics instead of
 inventing demand. Requests are capped at 1000 historical demand records and
-100 forecast slots.
+100 forecast slots. Each row includes deterministic confidence: `high` for at
+least four exact observations, `medium` for two or three exact observations,
+and `low` for zero or one exact observation. The initial contract uses only
+exact `day`/`shift`/`role` history. It does not use shift-role, role, or global
+fallbacks yet.
 
 Response:
 
@@ -1018,6 +1022,12 @@ Response:
       "historical_record_limit_reached": false,
       "forecast_slot_limit_reached": false
     },
+    "fallback_policy": {
+      "missing_exact_history": "default_required_to_0",
+      "uses_shift_role_fallback": false,
+      "uses_role_fallback": false,
+      "uses_global_fallback": false
+    },
     "horizon": {"days": [0], "shifts": [0], "roles": ["worker"]},
     "forecast": [
       {
@@ -1027,7 +1037,15 @@ Response:
         "required": 3,
         "mean_required": 3.0,
         "observation_count": 2,
-        "historical_values": [2, 4]
+        "historical_values": [2, 4],
+        "confidence": "medium",
+        "basis": {
+          "method": "historical_average",
+          "match_level": "exact_day_shift_role",
+          "observation_count": 2,
+          "mean_required": 3.0,
+          "fallback_used": false
+        }
       }
     ],
     "diagnostics": {
