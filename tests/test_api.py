@@ -340,6 +340,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
                 "POST /csv/mapping/export/preview"
             ),
             "forecast_demand": "POST /forecast/demand",
+            "forecast_demand_preview": "POST /forecast/demand/preview",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -377,6 +378,16 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "uses_external_llm": False,
             "will_solve": False,
             "will_mutate_solver_request": False,
+            "forecast_to_demand_preview": {
+                "endpoint": "POST /forecast/demand/preview",
+                "will_solve": False,
+                "will_mutate_solver_request": False,
+                "will_write_files": False,
+                "response_shape": {
+                    "ok": True,
+                    "result": "Forecast-to-demand preview payload",
+                },
+            },
             "response_shape": {
                 "ok": True,
                 "result": "Demand forecast payload",
@@ -702,6 +713,92 @@ def test_api_forecast_demand_rejects_historical_record_limit() -> None:
     assert payload["ok"] is False
     assert payload["error"]["type"] == "ForecastValidationError"
     assert "maximum is 1000" in payload["error"]["message"]
+    assert payload["error"]["request_id"]
+
+
+def test_api_forecast_demand_preview_returns_solver_compatible_rows() -> None:
+    forecast_response = _api_request(
+        "POST",
+        "/forecast/demand",
+        json_payload={
+            "historical_demand": [
+                {
+                    "period": 0,
+                    "day": 0,
+                    "shift": 0,
+                    "role": "worker",
+                    "required": 2,
+                },
+                {
+                    "period": 1,
+                    "day": 0,
+                    "shift": 0,
+                    "role": "worker",
+                    "required": 4,
+                },
+            ],
+            "horizon": {"days": [0], "shifts": [0, 1], "roles": ["worker"]},
+        },
+    )
+    forecast_payload = forecast_response.json()["result"]
+
+    response = _api_request(
+        "POST",
+        "/forecast/demand/preview",
+        json_payload={"forecast": forecast_payload},
+    )
+    second_response = _api_request(
+        "POST",
+        "/forecast/demand/preview",
+        json_payload={"forecast": forecast_payload},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"]
+    assert response.json()["result"] == second_response.json()["result"]
+    envelope = response.json()
+    assert envelope["ok"] is True
+    result_payload = envelope["result"]
+    assert result_payload["type"] == "forecast_to_demand_preview"
+    assert result_payload["forecast_contract_version"] == 1
+    assert result_payload["input_shape"] == "forecast_response"
+    assert result_payload["uses_external_ml"] is False
+    assert result_payload["uses_external_llm"] is False
+    assert result_payload["will_solve"] is False
+    assert result_payload["will_mutate_solver_request"] is False
+    assert result_payload["will_write_files"] is False
+    assert result_payload["demand_rows"] == [
+        {"day": 0, "shift": 0, "role": "worker", "required": 3},
+        {"day": 0, "shift": 1, "role": "worker", "required": 0},
+    ]
+    assert result_payload["traceability"] == {
+        "source_forecast_row_count": 2,
+        "source_fields_used": ["day", "shift", "role", "required"],
+        "preserves_solver_contract": True,
+        "row_semantics_validated": False,
+    }
+    json.dumps(result_payload)
+
+
+def test_api_forecast_demand_preview_rejects_invalid_rows() -> None:
+    response = _api_request(
+        "POST",
+        "/forecast/demand/preview",
+        json_payload={
+            "forecast_rows": [
+                {"day": 0, "shift": 0, "role": "worker", "required": True}
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["type"] == "ForecastValidationError"
+    assert (
+        "forecast[0].required must be an integer"
+        in payload["error"]["message"]
+    )
     assert payload["error"]["request_id"]
 
 

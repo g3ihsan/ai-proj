@@ -1070,6 +1070,69 @@ Response:
 
 Malformed forecast requests return `ForecastValidationError` with HTTP 400.
 
+### `POST /forecast/demand/preview`
+
+Converts forecast rows into solver-compatible demand row shape without solving,
+writing files, calling `/solve-csv`, or mutating any solve request. This endpoint
+is preview-only; clients must explicitly review and submit any future solve
+request themselves.
+
+Accepted request shapes:
+
+```json
+{
+  "forecast": {
+    "type": "demand_forecast",
+    "forecast": [
+      {"day": 0, "shift": 0, "role": "worker", "required": 3}
+    ]
+  }
+}
+```
+
+```json
+{
+  "forecast_rows": [
+    {"day": 0, "shift": 0, "role": "worker", "required": 3}
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "type": "forecast_to_demand_preview",
+    "forecast_contract_version": 1,
+    "source": "deterministic_forecast_to_demand_preview",
+    "input_shape": "forecast_response",
+    "uses_external_ml": false,
+    "uses_external_llm": false,
+    "will_solve": false,
+    "will_mutate_solver_request": false,
+    "will_write_files": false,
+    "row_count": 1,
+    "total_required": 3,
+    "demand_rows": [
+      {"day": 0, "shift": 0, "role": "worker", "required": 3}
+    ],
+    "traceability": {
+      "source_forecast_row_count": 1,
+      "source_fields_used": ["day", "shift", "role", "required"],
+      "preserves_solver_contract": true,
+      "row_semantics_validated": false
+    }
+  }
+}
+```
+
+The preview validates row shape, integer fields, non-empty roles, non-negative
+`required`, and duplicate `day`/`shift`/`role` slots. It does not validate full
+solver semantics or staffing feasibility; `/solve` and `/solve-csv` remain the
+only scheduling paths.
+
 ### `POST /solve-csv`
 
 Accepts three uploaded CSV files, solves through the same canonical JSON

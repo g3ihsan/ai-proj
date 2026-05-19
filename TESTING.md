@@ -100,6 +100,11 @@ the missing-exact-history fallback policy, JSON serializability,
 `uses_external_ml=false`, `uses_external_llm=false`, `will_solve=false`, and
 `will_mutate_solver_request=false`. Forecasts are planning evidence only and do
 not call `/solve`, `/solve-csv`, or mutate canonical solve requests.
+`POST /forecast/demand/preview` covers deterministic conversion of forecast rows
+into canonical solver demand row shape. Tests assert both full forecast-response
+and direct row-list request shapes, row-shape validation, duplicate demand slot
+rejection, JSON serializability, deterministic output, no solving, no file
+writing, and no solve-request mutation.
 
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:

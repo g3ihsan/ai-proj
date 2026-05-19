@@ -93,6 +93,10 @@ are reported in diagnostics rather than invented, receive `confidence=low`, and
 carry basis metadata with `fallback_used=true` and
 `fallback_reason=no_exact_history`. Current forecasting does not use shift-role,
 role, or global fallback, and it never automatically changes solver demand.
+`POST /forecast/demand/preview` converts reviewed forecast rows to canonical
+`day`/`shift`/`role`/`required` demand row shape in memory only. It does not run
+the solver, does not mutate solve requests, does not write files, and does not
+validate staffing feasibility.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.

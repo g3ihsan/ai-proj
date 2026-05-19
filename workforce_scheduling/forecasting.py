@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 FORECAST_CONTRACT_VERSION = 1
 FORECAST_TYPE_DEMAND = "demand_forecast"
+FORECAST_TYPE_DEMAND_PREVIEW = "forecast_to_demand_preview"
 FORECAST_METHOD_HISTORICAL_AVERAGE = "historical_average"
 SUPPORTED_FORECAST_METHODS = (FORECAST_METHOD_HISTORICAL_AVERAGE,)
 MAX_HISTORICAL_DEMAND_RECORDS = 1000
@@ -21,6 +22,108 @@ class ForecastingError(ValueError):
 
 class ForecastValidationError(ForecastingError):
     pass
+
+
+def forecast_to_demand_preview(payload: Mapping[str, Any]) -> dict[str, Any]:
+    preview_request = validate_forecast_to_demand_request(payload)
+    forecast_rows = preview_request["forecast_rows"]
+    demand_rows = demand_rows_from_forecast(forecast_rows)
+    total_required = sum(row["required"] for row in demand_rows)
+
+    return {
+        "type": FORECAST_TYPE_DEMAND_PREVIEW,
+        "forecast_contract_version": FORECAST_CONTRACT_VERSION,
+        "source": "deterministic_forecast_to_demand_preview",
+        "input_shape": preview_request["input_shape"],
+        "uses_external_ml": False,
+        "uses_external_llm": False,
+        "will_solve": False,
+        "will_mutate_solver_request": False,
+        "will_write_files": False,
+        "row_count": len(demand_rows),
+        "total_required": total_required,
+        "demand_rows": demand_rows,
+        "traceability": {
+            "source_forecast_row_count": len(forecast_rows),
+            "source_fields_used": ["day", "shift", "role", "required"],
+            "preserves_solver_contract": True,
+            "row_semantics_validated": False,
+        },
+    }
+
+
+def demand_rows_from_forecast(
+    forecast_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    demand_rows: list[dict[str, Any]] = []
+    seen_slots: set[tuple[int, int, str]] = set()
+    for index, forecast_row in enumerate(forecast_rows):
+        row = _require_mapping(forecast_row, f"forecast[{index}]")
+        demand_row = {
+            "day": _required_forecast_row_non_negative_int(row, "day", index),
+            "shift": _required_forecast_row_non_negative_int(row, "shift", index),
+            "role": _required_forecast_row_non_empty_string(row, "role", index),
+            "required": _required_forecast_row_non_negative_int(
+                row,
+                "required",
+                index,
+            ),
+        }
+        slot_key = (
+            demand_row["day"],
+            demand_row["shift"],
+            demand_row["role"],
+        )
+        if slot_key in seen_slots:
+            raise ForecastValidationError(
+                "Duplicate forecast demand slot "
+                f"(day={slot_key[0]}, shift={slot_key[1]}, role={slot_key[2]})"
+            )
+        seen_slots.add(slot_key)
+        demand_rows.append(demand_row)
+    return demand_rows
+
+
+def validate_forecast_to_demand_request(payload: Mapping[str, Any]) -> dict[str, Any]:
+    request = _require_mapping(payload, "Forecast-to-demand preview request")
+    forecast_payload = request.get("forecast")
+    if isinstance(forecast_payload, Mapping):
+        forecast_type = forecast_payload.get("type")
+        if forecast_type != FORECAST_TYPE_DEMAND:
+            raise ForecastValidationError(
+                "Forecast-to-demand preview forecast.type must be demand_forecast"
+            )
+        forecast_rows = forecast_payload.get("forecast")
+        input_shape = "forecast_response"
+    elif isinstance(forecast_payload, list):
+        forecast_rows = forecast_payload
+        input_shape = "forecast_rows"
+    elif "forecast_rows" in request:
+        forecast_rows = request.get("forecast_rows")
+        input_shape = "forecast_rows"
+    else:
+        raise ForecastValidationError(
+            "Forecast-to-demand preview request must include forecast or forecast_rows"
+        )
+
+    if not isinstance(forecast_rows, list):
+        raise ForecastValidationError(
+            "Forecast-to-demand preview forecast rows must be a list"
+        )
+    if not forecast_rows:
+        raise ForecastValidationError(
+            "Forecast-to-demand preview forecast rows must not be empty"
+        )
+    if len(forecast_rows) > MAX_FORECAST_SLOTS:
+        raise ForecastValidationError(
+            "Forecast-to-demand preview contains "
+            f"{len(forecast_rows)} row(s); maximum is {MAX_FORECAST_SLOTS}"
+        )
+
+    return {
+        "forecast_rows": list(forecast_rows),
+        "input_shape": input_shape,
+    }
 
 
 def forecast_response_from_request(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -332,6 +435,31 @@ def _required_non_empty_string(
     if not isinstance(value, str) or not value.strip():
         raise ForecastValidationError(
             f"historical_demand[{index}].{key} must be a non-empty string"
+        )
+    return value.strip()
+
+
+def _required_forecast_row_non_negative_int(
+    row: Mapping[str, Any],
+    key: str,
+    index: int,
+) -> int:
+    if key not in row:
+        raise ForecastValidationError(f"Missing forecast[{index}].{key}")
+    return _non_negative_int(row[key], f"forecast[{index}].{key}")
+
+
+def _required_forecast_row_non_empty_string(
+    row: Mapping[str, Any],
+    key: str,
+    index: int,
+) -> str:
+    if key not in row:
+        raise ForecastValidationError(f"Missing forecast[{index}].{key}")
+    value = row[key]
+    if not isinstance(value, str) or not value.strip():
+        raise ForecastValidationError(
+            f"forecast[{index}].{key} must be a non-empty string"
         )
     return value.strip()
 

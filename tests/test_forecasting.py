@@ -10,7 +10,9 @@ from workforce_scheduling.forecasting import (
     MAX_FORECAST_SLOTS,
     MAX_HISTORICAL_DEMAND_RECORDS,
     ForecastValidationError,
+    demand_rows_from_forecast,
     forecast_response_from_request,
+    forecast_to_demand_preview,
 )
 
 
@@ -227,6 +229,90 @@ def test_forecast_confidence_levels_are_deterministic() -> None:
         "fallback_used": True,
         "fallback_reason": "no_exact_history",
     }
+
+
+def test_forecast_to_demand_preview_accepts_full_forecast_response() -> None:
+    forecast_response = forecast_response_from_request(_forecast_request())
+
+    preview = forecast_to_demand_preview({"forecast": forecast_response})
+
+    assert preview == {
+        "type": "forecast_to_demand_preview",
+        "forecast_contract_version": FORECAST_CONTRACT_VERSION,
+        "source": "deterministic_forecast_to_demand_preview",
+        "input_shape": "forecast_response",
+        "uses_external_ml": False,
+        "uses_external_llm": False,
+        "will_solve": False,
+        "will_mutate_solver_request": False,
+        "will_write_files": False,
+        "row_count": 3,
+        "total_required": 5,
+        "demand_rows": [
+            {"day": 0, "shift": 0, "role": "worker", "required": 3},
+            {"day": 0, "shift": 1, "role": "worker", "required": 2},
+            {"day": 0, "shift": 2, "role": "worker", "required": 0},
+        ],
+        "traceability": {
+            "source_forecast_row_count": 3,
+            "source_fields_used": ["day", "shift", "role", "required"],
+            "preserves_solver_contract": True,
+            "row_semantics_validated": False,
+        },
+    }
+    json.dumps(preview)
+
+
+def test_forecast_to_demand_preview_accepts_direct_forecast_rows() -> None:
+    forecast_rows = forecast_response_from_request(_forecast_request())["forecast"]
+
+    preview = forecast_to_demand_preview({"forecast_rows": forecast_rows})
+
+    assert preview["input_shape"] == "forecast_rows"
+    assert preview["demand_rows"] == [
+        {"day": 0, "shift": 0, "role": "worker", "required": 3},
+        {"day": 0, "shift": 1, "role": "worker", "required": 2},
+        {"day": 0, "shift": 2, "role": "worker", "required": 0},
+    ]
+
+
+def test_forecast_to_demand_preview_accepts_forecast_row_list_alias() -> None:
+    forecast_rows = forecast_response_from_request(_forecast_request())["forecast"]
+
+    preview = forecast_to_demand_preview({"forecast": forecast_rows})
+
+    assert preview["input_shape"] == "forecast_rows"
+    assert preview["row_count"] == 3
+
+
+def test_forecast_to_demand_preview_is_deterministic_and_does_not_mutate_input() -> None:
+    forecast_response = forecast_response_from_request(_forecast_request())
+    request_payload = {"forecast": forecast_response}
+    before = json.loads(json.dumps(request_payload))
+
+    preview = forecast_to_demand_preview(request_payload)
+    second_preview = forecast_to_demand_preview(request_payload)
+
+    assert preview == second_preview
+    assert request_payload == before
+    json.dumps(preview)
+
+
+def test_demand_rows_from_forecast_returns_canonical_solver_demand_rows() -> None:
+    forecast_rows = [
+        {
+            "day": 1,
+            "shift": 2,
+            "role": " supervisor ",
+            "required": 3,
+            "confidence": "medium",
+            "basis": {"method": "historical_average"},
+        }
+    ]
+
+    assert demand_rows_from_forecast(forecast_rows) == [
+        {"day": 1, "shift": 2, "role": "supervisor", "required": 3}
+    ]
 
 
 @pytest.mark.parametrize(
@@ -466,3 +552,94 @@ def test_forecast_confidence_levels_are_deterministic() -> None:
 def test_forecast_request_validation_errors(payload: dict, message: str) -> None:
     with pytest.raises(ForecastValidationError, match=re.escape(message)):
         forecast_response_from_request(payload)
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ([], "Forecast-to-demand preview request must be an object"),
+        ({}, "must include forecast or forecast_rows"),
+        (
+            {"forecast": {"type": "other", "forecast": []}},
+            "forecast.type must be demand_forecast",
+        ),
+        (
+            {"forecast": {"type": "demand_forecast"}},
+            "forecast rows must be a list",
+        ),
+        ({"forecast_rows": []}, "forecast rows must not be empty"),
+        (
+            {
+                "forecast_rows": [
+                    {
+                        "day": index,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 1,
+                    }
+                    for index in range(MAX_FORECAST_SLOTS + 1)
+                ]
+            },
+            "contains 101 row(s); maximum is 100",
+        ),
+        (
+            {"forecast_rows": [{"shift": 0, "role": "worker", "required": 1}]},
+            "Missing forecast[0].day",
+        ),
+        (
+            {
+                "forecast_rows": [
+                    {"day": True, "shift": 0, "role": "worker", "required": 1}
+                ]
+            },
+            "forecast[0].day must be an integer",
+        ),
+        (
+            {
+                "forecast_rows": [
+                    {"day": 0, "shift": False, "role": "worker", "required": 1}
+                ]
+            },
+            "forecast[0].shift must be an integer",
+        ),
+        (
+            {
+                "forecast_rows": [
+                    {"day": 0, "shift": 0, "role": "", "required": 1}
+                ]
+            },
+            "forecast[0].role must be a non-empty string",
+        ),
+        (
+            {
+                "forecast_rows": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": True}
+                ]
+            },
+            "forecast[0].required must be an integer",
+        ),
+        (
+            {
+                "forecast_rows": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": -1}
+                ]
+            },
+            "forecast[0].required must be non-negative",
+        ),
+        (
+            {
+                "forecast_rows": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": 1},
+                    {"day": 0, "shift": 0, "role": "worker", "required": 2},
+                ]
+            },
+            "Duplicate forecast demand slot",
+        ),
+    ],
+)
+def test_forecast_to_demand_preview_validation_errors(
+    payload: dict,
+    message: str,
+) -> None:
+    with pytest.raises(ForecastValidationError, match=re.escape(message)):
+        forecast_to_demand_preview(payload)
