@@ -99,6 +99,11 @@ the solver, does not mutate solve requests, does not write files, and does not
 validate staffing feasibility. Preview rows must preserve forecast confidence
 and basis evidence; low-confidence, fallback, and zero-required rows are surfaced
 as warnings for manager review.
+`POST /forecast/demand/apply-plan` compares forecast-derived demand with
+existing demand using `merge_forecast_over_existing`, but still only returns an
+in-memory plan. It reports add, update, unchanged, and retained-existing rows,
+returns `can_apply=false`, does not solve, does not mutate solve requests, and
+does not validate staffing feasibility.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.

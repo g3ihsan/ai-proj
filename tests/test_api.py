@@ -341,6 +341,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             ),
             "forecast_demand": "POST /forecast/demand",
             "forecast_demand_preview": "POST /forecast/demand/preview",
+            "forecast_demand_apply_plan": "POST /forecast/demand/apply-plan",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -386,6 +387,17 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
                 "response_shape": {
                     "ok": True,
                     "result": "Forecast-to-demand preview payload",
+                },
+            },
+            "forecast_demand_apply_plan": {
+                "endpoint": "POST /forecast/demand/apply-plan",
+                "policy": "merge_forecast_over_existing",
+                "will_solve": False,
+                "will_mutate_solver_request": False,
+                "will_write_files": False,
+                "response_shape": {
+                    "ok": True,
+                    "result": "Forecast demand apply-plan payload",
                 },
             },
             "response_shape": {
@@ -850,6 +862,117 @@ def test_api_forecast_demand_preview_rejects_invalid_rows() -> None:
     assert payload["error"]["type"] == "ForecastValidationError"
     assert (
         "forecast[0].required must be an integer"
+        in payload["error"]["message"]
+    )
+    assert payload["error"]["request_id"]
+
+
+def test_api_forecast_demand_apply_plan_returns_preview_only_plan() -> None:
+    forecast_response = _api_request(
+        "POST",
+        "/forecast/demand",
+        json_payload={
+            "historical_demand": [
+                {
+                    "period": 0,
+                    "day": 0,
+                    "shift": 0,
+                    "role": "worker",
+                    "required": 2,
+                },
+                {
+                    "period": 1,
+                    "day": 0,
+                    "shift": 0,
+                    "role": "worker",
+                    "required": 4,
+                },
+            ],
+            "horizon": {"days": [0], "shifts": [0, 1], "roles": ["worker"]},
+        },
+    )
+    preview_response = _api_request(
+        "POST",
+        "/forecast/demand/preview",
+        json_payload={"forecast": forecast_response.json()["result"]},
+    )
+    preview_payload = preview_response.json()["result"]
+    solve_request = {
+        "problem": {
+            "demand": [
+                {"day": 0, "shift": 0, "role": "worker", "required": 2},
+                {"day": 0, "shift": 2, "role": "worker", "required": 5},
+            ]
+        }
+    }
+    before = json.loads(json.dumps(solve_request))
+
+    response = _api_request(
+        "POST",
+        "/forecast/demand/apply-plan",
+        json_payload={
+            "forecast_demand_preview": preview_payload,
+            "solve_request": solve_request,
+        },
+    )
+    second_response = _api_request(
+        "POST",
+        "/forecast/demand/apply-plan",
+        json_payload={
+            "forecast_demand_preview": preview_payload,
+            "solve_request": solve_request,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"]
+    assert response.json()["result"] == second_response.json()["result"]
+    assert solve_request == before
+    envelope = response.json()
+    assert envelope["ok"] is True
+    result_payload = envelope["result"]
+    assert result_payload["type"] == "forecast_demand_apply_plan"
+    assert result_payload["policy"] == "merge_forecast_over_existing"
+    assert result_payload["uses_external_ml"] is False
+    assert result_payload["uses_external_llm"] is False
+    assert result_payload["will_solve"] is False
+    assert result_payload["will_mutate_solver_request"] is False
+    assert result_payload["will_write_files"] is False
+    assert result_payload["can_apply"] is False
+    assert result_payload["summary"]["add_count"] == 1
+    assert result_payload["summary"]["update_count"] == 1
+    assert result_payload["summary"]["retain_existing_count"] == 1
+    assert result_payload["resulting_demand_rows"] == [
+        {"day": 0, "shift": 0, "role": "worker", "required": 3},
+        {"day": 0, "shift": 1, "role": "worker", "required": 0},
+        {"day": 0, "shift": 2, "role": "worker", "required": 5},
+    ]
+    assert [warning["code"] for warning in result_payload["warnings"]] == [
+        "existing_slot_without_forecast",
+    ]
+    json.dumps(result_payload)
+
+
+def test_api_forecast_demand_apply_plan_rejects_invalid_rows() -> None:
+    response = _api_request(
+        "POST",
+        "/forecast/demand/apply-plan",
+        json_payload={
+            "forecast_demand_rows": [
+                {"day": 0, "shift": 0, "role": "worker", "required": True}
+            ],
+            "existing_demand": [
+                {"day": 0, "shift": 0, "role": "worker", "required": 1}
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["type"] == "ForecastValidationError"
+    assert (
+        "forecast_demand_rows[0].required must be an integer"
         in payload["error"]["message"]
     )
     assert payload["error"]["request_id"]

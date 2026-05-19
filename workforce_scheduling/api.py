@@ -55,6 +55,7 @@ from .forecasting import (
     MAX_FORECAST_SLOTS,
     MAX_HISTORICAL_DEMAND_RECORDS,
     SUPPORTED_FORECAST_METHODS,
+    forecast_demand_apply_plan,
     forecast_response_from_request,
     forecast_to_demand_preview,
 )
@@ -204,6 +205,7 @@ async def metadata() -> dict[str, Any]:
             ),
             "forecast_demand": "POST /forecast/demand",
             "forecast_demand_preview": "POST /forecast/demand/preview",
+            "forecast_demand_apply_plan": "POST /forecast/demand/apply-plan",
             "solve_csv": "POST /solve-csv",
             "solve_jobs": "POST /solve-jobs",
             "solve_job_status": "GET /solve-jobs/{job_id}",
@@ -249,6 +251,17 @@ async def metadata() -> dict[str, Any]:
                 "response_shape": {
                     "ok": True,
                     "result": "Forecast-to-demand preview payload",
+                },
+            },
+            "forecast_demand_apply_plan": {
+                "endpoint": "POST /forecast/demand/apply-plan",
+                "policy": "merge_forecast_over_existing",
+                "will_solve": False,
+                "will_mutate_solver_request": False,
+                "will_write_files": False,
+                "response_shape": {
+                    "ok": True,
+                    "result": "Forecast demand apply-plan payload",
                 },
             },
             "response_shape": {
@@ -581,6 +594,30 @@ async def forecast_demand_preview_endpoint(request: Request) -> JSONResponse:
     _log_solve_route(
         request,
         "forecast_demand_preview",
+        response_payload,
+        status_code,
+    )
+    return JSONResponse(content=response_payload, status_code=status_code)
+
+
+@app.post("/forecast/demand/apply-plan")
+async def forecast_demand_apply_plan_endpoint(request: Request) -> JSONResponse:
+    try:
+        request_payload = await _json_request_payload(request)
+        response_payload = {
+            "ok": True,
+            "result": forecast_demand_apply_plan(request_payload),
+        }
+    except Exception as exc:
+        response_payload = _error_payload_for_request(exc, request)
+
+    response_payload = _with_request_id(response_payload, request)
+    status_code = 200 if response_payload["ok"] else 400
+    if _error_type(response_payload) == "RequestTooLargeError":
+        status_code = 413
+    _log_solve_route(
+        request,
+        "forecast_demand_apply_plan",
         response_payload,
         status_code,
     )

@@ -10,7 +10,9 @@ from workforce_scheduling.forecasting import (
     MAX_FORECAST_SLOTS,
     MAX_HISTORICAL_DEMAND_RECORDS,
     ForecastValidationError,
+    compare_demand_rows,
     demand_rows_from_forecast,
+    forecast_demand_apply_plan,
     forecast_response_from_request,
     forecast_to_demand_preview,
 )
@@ -436,6 +438,206 @@ def test_demand_rows_from_forecast_returns_canonical_solver_demand_rows() -> Non
     assert demand_rows_from_forecast(forecast_rows) == [
         {"day": 1, "shift": 2, "role": "supervisor", "required": 3}
     ]
+
+
+def test_forecast_demand_apply_plan_compares_preview_to_existing_demand() -> None:
+    forecast_response = forecast_response_from_request(_forecast_request())
+    forecast_preview = forecast_to_demand_preview({"forecast": forecast_response})
+    existing_demand = [
+        {"day": 0, "shift": 0, "role": "worker", "required": 2},
+        {"day": 0, "shift": 1, "role": "worker", "required": 2},
+        {"day": 0, "shift": 3, "role": "worker", "required": 5},
+    ]
+
+    apply_plan = forecast_demand_apply_plan(
+        {
+            "forecast_demand_preview": forecast_preview,
+            "existing_demand": existing_demand,
+        }
+    )
+
+    assert apply_plan == {
+        "type": "forecast_demand_apply_plan",
+        "forecast_contract_version": FORECAST_CONTRACT_VERSION,
+        "source": "deterministic_forecast_demand_apply_plan",
+        "policy": "merge_forecast_over_existing",
+        "input_shape": {
+            "forecast_demand": "forecast_demand_preview",
+            "existing_demand": "existing_demand",
+        },
+        "uses_external_ml": False,
+        "uses_external_llm": False,
+        "will_solve": False,
+        "will_mutate_solver_request": False,
+        "will_write_files": False,
+        "can_apply": False,
+        "apply_mode": "preview_only",
+        "reason": "preview_only_not_mutating_solver_request",
+        "summary": {
+            "existing_demand_row_count": 3,
+            "forecast_demand_row_count": 3,
+            "resulting_demand_row_count": 4,
+            "add_count": 1,
+            "update_count": 1,
+            "unchanged_count": 1,
+            "retain_existing_count": 1,
+            "warning_count": 1,
+            "total_existing_required": 9,
+            "total_forecast_required": 5,
+            "total_resulting_required": 10,
+        },
+        "comparison": {
+            "add": [
+                {
+                    "slot": {"day": 0, "shift": 2, "role": "worker"},
+                    "forecast_row": {
+                        "day": 0,
+                        "shift": 2,
+                        "role": "worker",
+                        "required": 0,
+                    },
+                    "action": "add",
+                }
+            ],
+            "update": [
+                {
+                    "slot": {"day": 0, "shift": 0, "role": "worker"},
+                    "existing_row": {
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 2,
+                    },
+                    "forecast_row": {
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 3,
+                    },
+                    "from_required": 2,
+                    "to_required": 3,
+                    "delta_required": 1,
+                    "action": "update_required",
+                }
+            ],
+            "unchanged": [
+                {
+                    "slot": {"day": 0, "shift": 1, "role": "worker"},
+                    "existing_row": {
+                        "day": 0,
+                        "shift": 1,
+                        "role": "worker",
+                        "required": 2,
+                    },
+                    "forecast_row": {
+                        "day": 0,
+                        "shift": 1,
+                        "role": "worker",
+                        "required": 2,
+                    },
+                    "action": "unchanged",
+                }
+            ],
+            "retain_existing": [
+                {
+                    "slot": {"day": 0, "shift": 3, "role": "worker"},
+                    "existing_row": {
+                        "day": 0,
+                        "shift": 3,
+                        "role": "worker",
+                        "required": 5,
+                    },
+                    "action": "retain_existing",
+                    "reason": "no_forecast_row_for_existing_slot",
+                }
+            ],
+        },
+        "resulting_demand_rows": [
+            {"day": 0, "shift": 0, "role": "worker", "required": 3},
+            {"day": 0, "shift": 1, "role": "worker", "required": 2},
+            {"day": 0, "shift": 2, "role": "worker", "required": 0},
+            {"day": 0, "shift": 3, "role": "worker", "required": 5},
+        ],
+        "warnings": [
+            {
+                "slot": {"day": 0, "shift": 3, "role": "worker"},
+                "code": "existing_slot_without_forecast",
+                "message": (
+                    "Existing demand slot has no matching forecast row and "
+                    "would be retained by the preview policy."
+                ),
+            }
+        ],
+        "traceability": {
+            "source_fields_used": ["day", "shift", "role", "required"],
+            "preserves_solver_contract": True,
+            "row_semantics_validated": False,
+            "solver_request_mutated": False,
+        },
+    }
+    json.dumps(apply_plan)
+
+
+def test_forecast_demand_apply_plan_accepts_solve_request_without_mutation() -> None:
+    forecast_rows = [
+        {"day": 0, "shift": 0, "role": "worker", "required": 4},
+    ]
+    solve_request = {
+        "problem": {
+            "demand": [
+                {"day": 0, "shift": 0, "role": "worker", "required": 3},
+            ]
+        }
+    }
+    before = json.loads(json.dumps(solve_request))
+
+    apply_plan = forecast_demand_apply_plan(
+        {
+            "forecast_demand_rows": forecast_rows,
+            "solve_request": solve_request,
+        }
+    )
+    second_plan = forecast_demand_apply_plan(
+        {
+            "forecast_demand_rows": forecast_rows,
+            "solve_request": solve_request,
+        }
+    )
+
+    assert apply_plan == second_plan
+    assert solve_request == before
+    assert apply_plan["input_shape"] == {
+        "forecast_demand": "forecast_demand_rows",
+        "existing_demand": "solve_request",
+    }
+    assert apply_plan["comparison"]["update"][0]["delta_required"] == 1
+    assert apply_plan["will_solve"] is False
+    assert apply_plan["will_mutate_solver_request"] is False
+    assert apply_plan["will_write_files"] is False
+
+
+def test_compare_demand_rows_groups_actions_deterministically() -> None:
+    comparison = compare_demand_rows(
+        forecast_demand_rows=[
+            {"day": 0, "shift": 0, "role": "worker", "required": 2},
+            {"day": 1, "shift": 0, "role": "worker", "required": 1},
+        ],
+        existing_demand_rows=[
+            {"day": 0, "shift": 0, "role": "worker", "required": 2},
+            {"day": 2, "shift": 0, "role": "worker", "required": 3},
+        ],
+    )
+
+    assert [entry["slot"] for entry in comparison["unchanged"]] == [
+        {"day": 0, "shift": 0, "role": "worker"}
+    ]
+    assert [entry["slot"] for entry in comparison["add"]] == [
+        {"day": 1, "shift": 0, "role": "worker"}
+    ]
+    assert [entry["slot"] for entry in comparison["retain_existing"]] == [
+        {"day": 2, "shift": 0, "role": "worker"}
+    ]
+    assert comparison["update"] == []
 
 
 @pytest.mark.parametrize(
@@ -899,3 +1101,104 @@ def test_forecast_to_demand_preview_validation_errors(
 ) -> None:
     with pytest.raises(ForecastValidationError, match=re.escape(message)):
         forecast_to_demand_preview(payload)
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ([], "Forecast demand apply-plan request must be an object"),
+        ({}, "must include forecast_demand_preview or forecast_demand_rows"),
+        (
+            {
+                "forecast_demand_preview": {
+                    "type": "wrong",
+                    "demand_rows": [],
+                },
+                "existing_demand": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": 1}
+                ],
+            },
+            "forecast_demand_preview.type must be forecast_to_demand_preview",
+        ),
+        (
+            {
+                "forecast_demand_rows": [],
+                "existing_demand": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": 1}
+                ],
+            },
+            "forecast_demand_rows must not be empty",
+        ),
+        (
+            {
+                "forecast_demand_rows": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": 1}
+                ],
+            },
+            "must include solve_request or existing_demand",
+        ),
+        (
+            {
+                "forecast_demand_rows": [
+                    {"day": True, "shift": 0, "role": "worker", "required": 1}
+                ],
+                "existing_demand": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": 1}
+                ],
+            },
+            "forecast_demand_rows[0].day must be an integer",
+        ),
+        (
+            {
+                "forecast_demand_rows": [
+                    {"day": 0, "shift": 0, "role": "", "required": 1}
+                ],
+                "existing_demand": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": 1}
+                ],
+            },
+            "forecast_demand_rows[0].role must be a non-empty string",
+        ),
+        (
+            {
+                "forecast_demand_rows": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": 1},
+                    {"day": 0, "shift": 0, "role": "worker", "required": 2},
+                ],
+                "existing_demand": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": 1}
+                ],
+            },
+            "Duplicate forecast_demand_rows slot",
+        ),
+        (
+            {
+                "forecast_demand_rows": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": 1}
+                ],
+                "existing_demand": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": True}
+                ],
+            },
+            "existing_demand[0].required must be an integer",
+        ),
+        (
+            {
+                "policy": "replace_all",
+                "forecast_demand_rows": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": 1}
+                ],
+                "existing_demand": [
+                    {"day": 0, "shift": 0, "role": "worker", "required": 1}
+                ],
+            },
+            "Unsupported forecast demand apply policy replace_all",
+        ),
+    ],
+)
+def test_forecast_demand_apply_plan_validation_errors(
+    payload: dict,
+    message: str,
+) -> None:
+    with pytest.raises(ForecastValidationError, match=re.escape(message)):
+        forecast_demand_apply_plan(payload)

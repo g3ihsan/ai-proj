@@ -7,10 +7,12 @@ from typing import Any, Mapping
 FORECAST_CONTRACT_VERSION = 1
 FORECAST_TYPE_DEMAND = "demand_forecast"
 FORECAST_TYPE_DEMAND_PREVIEW = "forecast_to_demand_preview"
+FORECAST_TYPE_DEMAND_APPLY_PLAN = "forecast_demand_apply_plan"
 FORECAST_METHOD_HISTORICAL_AVERAGE = "historical_average"
 SUPPORTED_FORECAST_METHODS = (FORECAST_METHOD_HISTORICAL_AVERAGE,)
 MAX_HISTORICAL_DEMAND_RECORDS = 1000
 MAX_FORECAST_SLOTS = 100
+FORECAST_APPLY_POLICY_MERGE = "merge_forecast_over_existing"
 FORECAST_MATCH_EXACT = "exact_day_shift_role"
 FORECAST_MATCH_NONE = "none"
 FORECAST_FALLBACK_REASON_NO_EXACT_HISTORY = "no_exact_history"
@@ -34,6 +36,180 @@ class ForecastingError(ValueError):
 
 class ForecastValidationError(ForecastingError):
     pass
+
+
+def forecast_demand_apply_plan(payload: Mapping[str, Any]) -> dict[str, Any]:
+    request = validate_forecast_demand_apply_plan_request(payload)
+    return build_forecast_demand_apply_plan(
+        forecast_demand_rows=request["forecast_demand_rows"],
+        existing_demand_rows=request["existing_demand_rows"],
+        forecast_input_shape=request["forecast_input_shape"],
+        existing_input_shape=request["existing_input_shape"],
+        policy=request["policy"],
+    )
+
+
+def build_forecast_demand_apply_plan(
+    *,
+    forecast_demand_rows: list[dict[str, Any]],
+    existing_demand_rows: list[dict[str, Any]],
+    forecast_input_shape: str,
+    existing_input_shape: str,
+    policy: str = FORECAST_APPLY_POLICY_MERGE,
+) -> dict[str, Any]:
+    comparison = compare_demand_rows(
+        forecast_demand_rows=forecast_demand_rows,
+        existing_demand_rows=existing_demand_rows,
+    )
+    resulting_demand_rows = _resulting_demand_rows_from_comparison(comparison)
+    warnings = _forecast_apply_plan_warnings(comparison)
+
+    return {
+        "type": FORECAST_TYPE_DEMAND_APPLY_PLAN,
+        "forecast_contract_version": FORECAST_CONTRACT_VERSION,
+        "source": "deterministic_forecast_demand_apply_plan",
+        "policy": policy,
+        "input_shape": {
+            "forecast_demand": forecast_input_shape,
+            "existing_demand": existing_input_shape,
+        },
+        "uses_external_ml": False,
+        "uses_external_llm": False,
+        "will_solve": False,
+        "will_mutate_solver_request": False,
+        "will_write_files": False,
+        "can_apply": False,
+        "apply_mode": "preview_only",
+        "reason": "preview_only_not_mutating_solver_request",
+        "summary": {
+            "existing_demand_row_count": len(existing_demand_rows),
+            "forecast_demand_row_count": len(forecast_demand_rows),
+            "resulting_demand_row_count": len(resulting_demand_rows),
+            "add_count": len(comparison["add"]),
+            "update_count": len(comparison["update"]),
+            "unchanged_count": len(comparison["unchanged"]),
+            "retain_existing_count": len(comparison["retain_existing"]),
+            "warning_count": len(warnings),
+            "total_existing_required": sum(
+                row["required"] for row in existing_demand_rows
+            ),
+            "total_forecast_required": sum(
+                row["required"] for row in forecast_demand_rows
+            ),
+            "total_resulting_required": sum(
+                row["required"] for row in resulting_demand_rows
+            ),
+        },
+        "comparison": comparison,
+        "resulting_demand_rows": resulting_demand_rows,
+        "warnings": warnings,
+        "traceability": {
+            "source_fields_used": ["day", "shift", "role", "required"],
+            "preserves_solver_contract": True,
+            "row_semantics_validated": False,
+            "solver_request_mutated": False,
+        },
+    }
+
+
+def compare_demand_rows(
+    *,
+    forecast_demand_rows: list[dict[str, Any]],
+    existing_demand_rows: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    forecast_by_slot = _demand_rows_by_slot(
+        forecast_demand_rows,
+        "forecast_demand_rows",
+    )
+    existing_by_slot = _demand_rows_by_slot(
+        existing_demand_rows,
+        "existing_demand_rows",
+    )
+    comparison: dict[str, list[dict[str, Any]]] = {
+        "add": [],
+        "update": [],
+        "unchanged": [],
+        "retain_existing": [],
+    }
+
+    for slot in sorted(forecast_by_slot):
+        forecast_row = forecast_by_slot[slot]
+        existing_row = existing_by_slot.get(slot)
+        if existing_row is None:
+            comparison["add"].append(
+                {
+                    "slot": _slot_payload(slot),
+                    "forecast_row": forecast_row,
+                    "action": "add",
+                }
+            )
+        elif existing_row["required"] != forecast_row["required"]:
+            comparison["update"].append(
+                {
+                    "slot": _slot_payload(slot),
+                    "existing_row": existing_row,
+                    "forecast_row": forecast_row,
+                    "from_required": existing_row["required"],
+                    "to_required": forecast_row["required"],
+                    "delta_required": (
+                        forecast_row["required"] - existing_row["required"]
+                    ),
+                    "action": "update_required",
+                }
+            )
+        else:
+            comparison["unchanged"].append(
+                {
+                    "slot": _slot_payload(slot),
+                    "existing_row": existing_row,
+                    "forecast_row": forecast_row,
+                    "action": "unchanged",
+                }
+            )
+
+    for slot in sorted(existing_by_slot):
+        if slot not in forecast_by_slot:
+            comparison["retain_existing"].append(
+                {
+                    "slot": _slot_payload(slot),
+                    "existing_row": existing_by_slot[slot],
+                    "action": "retain_existing",
+                    "reason": "no_forecast_row_for_existing_slot",
+                }
+            )
+
+    return comparison
+
+
+def validate_forecast_demand_apply_plan_request(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    request = _require_mapping(payload, "Forecast demand apply-plan request")
+    policy = request.get("policy", FORECAST_APPLY_POLICY_MERGE)
+    if policy != FORECAST_APPLY_POLICY_MERGE:
+        raise ForecastValidationError(
+            f"Unsupported forecast demand apply policy {policy}"
+        )
+
+    forecast_demand_rows, forecast_input_shape = _forecast_demand_rows_from_request(
+        request
+    )
+    existing_demand_rows, existing_input_shape = _existing_demand_rows_from_request(
+        request
+    )
+    return {
+        "forecast_demand_rows": _validate_demand_rows(
+            forecast_demand_rows,
+            "forecast_demand_rows",
+        ),
+        "existing_demand_rows": _validate_demand_rows(
+            existing_demand_rows,
+            "existing_demand",
+        ),
+        "forecast_input_shape": forecast_input_shape,
+        "existing_input_shape": existing_input_shape,
+        "policy": policy,
+    }
 
 
 def forecast_to_demand_preview(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -197,6 +373,206 @@ def forecast_to_demand_warnings(row_evidence: list[dict[str, Any]]) -> list[dict
                 }
             )
     return warnings
+
+
+def _forecast_demand_rows_from_request(
+    request: Mapping[str, Any],
+) -> tuple[list[Any], str]:
+    preview = request.get("forecast_demand_preview")
+    if isinstance(preview, Mapping):
+        preview_type = preview.get("type")
+        if preview_type != FORECAST_TYPE_DEMAND_PREVIEW:
+            raise ForecastValidationError(
+                "forecast_demand_preview.type must be forecast_to_demand_preview"
+            )
+        rows = preview.get("demand_rows")
+        return _require_list_value(
+            rows,
+            "forecast_demand_preview.demand_rows",
+        ), "forecast_demand_preview"
+    if "forecast_demand_rows" in request:
+        return _require_list_value(
+            request.get("forecast_demand_rows"),
+            "forecast_demand_rows",
+        ), "forecast_demand_rows"
+    raise ForecastValidationError(
+        "Forecast demand apply-plan request must include "
+        "forecast_demand_preview or forecast_demand_rows"
+    )
+
+
+def _existing_demand_rows_from_request(
+    request: Mapping[str, Any],
+) -> tuple[list[Any], str]:
+    solve_request = request.get("solve_request")
+    if isinstance(solve_request, Mapping):
+        problem = _require_mapping(
+            solve_request.get("problem"),
+            "solve_request.problem",
+        )
+        return _require_list_value(
+            problem.get("demand"),
+            "solve_request.problem.demand",
+        ), "solve_request"
+    if "existing_demand" in request:
+        return _require_list_value(
+            request.get("existing_demand"),
+            "existing_demand",
+        ), "existing_demand"
+    raise ForecastValidationError(
+        "Forecast demand apply-plan request must include "
+        "solve_request or existing_demand"
+    )
+
+
+def _validate_demand_rows(
+    raw_rows: list[Any],
+    label: str,
+) -> list[dict[str, Any]]:
+    if not raw_rows:
+        raise ForecastValidationError(f"{label} must not be empty")
+    if len(raw_rows) > MAX_FORECAST_SLOTS:
+        raise ForecastValidationError(
+            f"{label} contains {len(raw_rows)} row(s); maximum is "
+            f"{MAX_FORECAST_SLOTS}"
+        )
+    rows: list[dict[str, Any]] = []
+    seen_slots: set[tuple[int, int, str]] = set()
+    for index, raw_row in enumerate(raw_rows):
+        row = _require_mapping(raw_row, f"{label}[{index}]")
+        parsed = {
+            "day": _required_demand_row_non_negative_int(row, "day", label, index),
+            "shift": _required_demand_row_non_negative_int(
+                row,
+                "shift",
+                label,
+                index,
+            ),
+            "role": _required_demand_row_non_empty_string(row, "role", label, index),
+            "required": _required_demand_row_non_negative_int(
+                row,
+                "required",
+                label,
+                index,
+            ),
+        }
+        slot = _demand_slot(parsed)
+        if slot in seen_slots:
+            raise ForecastValidationError(
+                f"Duplicate {label} slot "
+                f"(day={slot[0]}, shift={slot[1]}, role={slot[2]})"
+            )
+        seen_slots.add(slot)
+        rows.append(parsed)
+    return rows
+
+
+def _demand_rows_by_slot(
+    demand_rows: list[dict[str, Any]],
+    label: str,
+) -> dict[tuple[int, int, str], dict[str, Any]]:
+    parsed_rows = _validate_demand_rows(demand_rows, label)
+    return {
+        _demand_slot(row): row
+        for row in parsed_rows
+    }
+
+
+def _resulting_demand_rows_from_comparison(
+    comparison: Mapping[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    rows_by_slot: dict[tuple[int, int, str], dict[str, Any]] = {}
+    for entry in comparison["retain_existing"]:
+        row = entry["existing_row"]
+        rows_by_slot[_demand_slot(row)] = row
+    for entry in comparison["unchanged"]:
+        row = entry["existing_row"]
+        rows_by_slot[_demand_slot(row)] = row
+    for entry in comparison["update"]:
+        row = entry["forecast_row"]
+        rows_by_slot[_demand_slot(row)] = row
+    for entry in comparison["add"]:
+        row = entry["forecast_row"]
+        rows_by_slot[_demand_slot(row)] = row
+    return [
+        rows_by_slot[slot]
+        for slot in sorted(rows_by_slot)
+    ]
+
+
+def _forecast_apply_plan_warnings(
+    comparison: Mapping[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    for entry in comparison["update"]:
+        if entry["to_required"] == 0:
+            warnings.append(
+                {
+                    "slot": entry["slot"],
+                    "code": "forecast_updates_required_to_zero",
+                    "message": (
+                        "Forecast demand would set an existing demand slot "
+                        "to required=0; review before applying manually."
+                    ),
+                }
+            )
+    for entry in comparison["retain_existing"]:
+        warnings.append(
+            {
+                "slot": entry["slot"],
+                "code": "existing_slot_without_forecast",
+                "message": (
+                    "Existing demand slot has no matching forecast row and "
+                    "would be retained by the preview policy."
+                ),
+            }
+        )
+    return warnings
+
+
+def _require_list_value(value: Any, label: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise ForecastValidationError(f"{label} must be a list")
+    return value
+
+
+def _required_demand_row_non_negative_int(
+    row: Mapping[str, Any],
+    key: str,
+    label: str,
+    index: int,
+) -> int:
+    if key not in row:
+        raise ForecastValidationError(f"Missing {label}[{index}].{key}")
+    return _non_negative_int(row[key], f"{label}[{index}].{key}")
+
+
+def _required_demand_row_non_empty_string(
+    row: Mapping[str, Any],
+    key: str,
+    label: str,
+    index: int,
+) -> str:
+    if key not in row:
+        raise ForecastValidationError(f"Missing {label}[{index}].{key}")
+    value = row[key]
+    if not isinstance(value, str) or not value.strip():
+        raise ForecastValidationError(
+            f"{label}[{index}].{key} must be a non-empty string"
+        )
+    return value.strip()
+
+
+def _demand_slot(row: Mapping[str, Any]) -> tuple[int, int, str]:
+    return int(row["day"]), int(row["shift"]), str(row["role"])
+
+
+def _slot_payload(slot: tuple[int, int, str]) -> dict[str, Any]:
+    return {
+        "day": slot[0],
+        "shift": slot[1],
+        "role": slot[2],
+    }
 
 
 def validate_forecast_to_demand_request(payload: Mapping[str, Any]) -> dict[str, Any]:

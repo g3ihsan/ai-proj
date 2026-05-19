@@ -106,6 +106,11 @@ and direct row-list request shapes, row-shape validation, duplicate demand slot
 rejection, confidence and basis validation, row evidence, warning summaries,
 JSON serializability, deterministic output, no solving, no file writing, and no
 solve-request mutation.
+`POST /forecast/demand/apply-plan` covers deterministic comparison between
+forecast-derived demand rows and existing demand. Tests assert update, add,
+unchanged, and retain-existing actions, preview-only safety flags,
+solve-request non-mutation, duplicate slot rejection, unsupported policy
+rejection, deterministic output, and no solving or file writing.
 
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:

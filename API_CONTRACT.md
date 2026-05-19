@@ -1194,6 +1194,117 @@ that convert to `required=0`. It does not validate full solver semantics or
 staffing feasibility; `/solve` and `/solve-csv` remain the only scheduling
 paths.
 
+### `POST /forecast/demand/apply-plan`
+
+Builds a deterministic preview of how forecast-derived demand rows would change
+an existing demand list or a solve request's `problem.demand`. This endpoint
+does not solve, does not write files, and does not mutate the submitted solve
+request. The initial policy is `merge_forecast_over_existing`: matching slots
+are updated from forecast rows, new forecast slots are added, unchanged slots are
+reported, and existing slots without forecast rows are retained.
+
+Accepted request shapes:
+
+```json
+{
+  "forecast_demand_preview": {
+    "type": "forecast_to_demand_preview",
+    "demand_rows": [
+      {"day": 0, "shift": 0, "role": "worker", "required": 3}
+    ]
+  },
+  "existing_demand": [
+    {"day": 0, "shift": 0, "role": "worker", "required": 2}
+  ]
+}
+```
+
+```json
+{
+  "forecast_demand_rows": [
+    {"day": 0, "shift": 0, "role": "worker", "required": 3}
+  ],
+  "solve_request": {
+    "problem": {
+      "demand": [
+        {"day": 0, "shift": 0, "role": "worker", "required": 2}
+      ]
+    }
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "type": "forecast_demand_apply_plan",
+    "forecast_contract_version": 1,
+    "source": "deterministic_forecast_demand_apply_plan",
+    "policy": "merge_forecast_over_existing",
+    "input_shape": {
+      "forecast_demand": "forecast_demand_preview",
+      "existing_demand": "existing_demand"
+    },
+    "uses_external_ml": false,
+    "uses_external_llm": false,
+    "will_solve": false,
+    "will_mutate_solver_request": false,
+    "will_write_files": false,
+    "can_apply": false,
+    "apply_mode": "preview_only",
+    "reason": "preview_only_not_mutating_solver_request",
+    "summary": {
+      "existing_demand_row_count": 1,
+      "forecast_demand_row_count": 1,
+      "resulting_demand_row_count": 1,
+      "add_count": 0,
+      "update_count": 1,
+      "unchanged_count": 0,
+      "retain_existing_count": 0,
+      "warning_count": 0,
+      "total_existing_required": 2,
+      "total_forecast_required": 3,
+      "total_resulting_required": 3
+    },
+    "comparison": {
+      "add": [],
+      "update": [
+        {
+          "slot": {"day": 0, "shift": 0, "role": "worker"},
+          "existing_row": {"day": 0, "shift": 0, "role": "worker", "required": 2},
+          "forecast_row": {"day": 0, "shift": 0, "role": "worker", "required": 3},
+          "from_required": 2,
+          "to_required": 3,
+          "delta_required": 1,
+          "action": "update_required"
+        }
+      ],
+      "unchanged": [],
+      "retain_existing": []
+    },
+    "resulting_demand_rows": [
+      {"day": 0, "shift": 0, "role": "worker", "required": 3}
+    ],
+    "warnings": [],
+    "traceability": {
+      "source_fields_used": ["day", "shift", "role", "required"],
+      "preserves_solver_contract": true,
+      "row_semantics_validated": false,
+      "solver_request_mutated": false
+    }
+  }
+}
+```
+
+The apply plan validates demand-row shape, rejects duplicate
+`day`/`shift`/`role` slots in both forecast and existing demand, and returns
+`can_apply=false` because this phase is preview-only. Existing slots without
+forecast rows are retained and reported as warnings. Solver feasibility is not
+checked here.
+
 ### `POST /solve-csv`
 
 Accepts three uploaded CSV files, solves through the same canonical JSON
