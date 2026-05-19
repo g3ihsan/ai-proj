@@ -8,6 +8,8 @@ FORECAST_CONTRACT_VERSION = 1
 FORECAST_TYPE_DEMAND = "demand_forecast"
 FORECAST_METHOD_HISTORICAL_AVERAGE = "historical_average"
 SUPPORTED_FORECAST_METHODS = (FORECAST_METHOD_HISTORICAL_AVERAGE,)
+MAX_HISTORICAL_DEMAND_RECORDS = 1000
+MAX_FORECAST_SLOTS = 100
 
 
 class ForecastingError(ValueError):
@@ -40,6 +42,12 @@ def baseline_demand_forecast(
         raise ForecastValidationError(f"Unsupported forecast method {method}")
 
     observed_periods = sorted({int(record["period"]) for record in historical_records})
+    forecast_slot_count = _forecast_slot_count(horizon)
+    if forecast_slot_count > MAX_FORECAST_SLOTS:
+        raise ForecastValidationError(
+            "Forecast horizon produces "
+            f"{forecast_slot_count} slot(s); maximum is {MAX_FORECAST_SLOTS}"
+        )
     grouped_required: dict[tuple[int, int, str], list[int]] = defaultdict(list)
     for record in historical_records:
         grouped_required[
@@ -84,7 +92,6 @@ def baseline_demand_forecast(
                 )
 
     total_forecast_required = sum(row["required"] for row in forecast_rows)
-    forecast_slot_count = len(forecast_rows)
     return {
         "type": FORECAST_TYPE_DEMAND,
         "forecast_contract_version": FORECAST_CONTRACT_VERSION,
@@ -97,6 +104,14 @@ def baseline_demand_forecast(
         "will_write_files": False,
         "historical_record_count": len(historical_records),
         "historical_period_count": len(observed_periods),
+        "limits": {
+            "max_historical_demand_records": MAX_HISTORICAL_DEMAND_RECORDS,
+            "max_forecast_slots": MAX_FORECAST_SLOTS,
+            "historical_record_limit_reached": (
+                len(historical_records) >= MAX_HISTORICAL_DEMAND_RECORDS
+            ),
+            "forecast_slot_limit_reached": forecast_slot_count >= MAX_FORECAST_SLOTS,
+        },
         "horizon": {
             "days": list(horizon["days"]),
             "shifts": list(horizon["shifts"]),
@@ -154,6 +169,12 @@ def _historical_demand_records(payload: Mapping[str, Any]) -> list[dict[str, Any
     if not raw_records:
         raise ForecastValidationError(
             "Forecast request historical_demand must not be empty"
+        )
+    if len(raw_records) > MAX_HISTORICAL_DEMAND_RECORDS:
+        raise ForecastValidationError(
+            "Forecast request historical_demand contains "
+            f"{len(raw_records)} record(s); maximum is "
+            f"{MAX_HISTORICAL_DEMAND_RECORDS}"
         )
 
     records: list[dict[str, Any]] = []
@@ -224,6 +245,14 @@ def _horizon_role_values(payload: Mapping[str, Any]) -> list[str]:
             )
         parsed.append(value.strip())
     return sorted(set(parsed))
+
+
+def _forecast_slot_count(horizon: Mapping[str, list[int] | list[str]]) -> int:
+    return (
+        len(horizon["days"])
+        * len(horizon["shifts"])
+        * len(horizon["roles"])
+    )
 
 
 def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:

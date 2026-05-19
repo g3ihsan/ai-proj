@@ -992,7 +992,8 @@ that identifies the historical planning window. The initial supported method is
 `historical_average`. If `horizon` is omitted, the endpoint forecasts the
 observed historical days, shifts, and roles. Horizon slots with no matching
 history forecast `required=0` and are reported in diagnostics instead of
-inventing demand.
+inventing demand. Requests are capped at 1000 historical demand records and
+100 forecast slots.
 
 Response:
 
@@ -1011,6 +1012,12 @@ Response:
     "will_write_files": false,
     "historical_record_count": 2,
     "historical_period_count": 2,
+    "limits": {
+      "max_historical_demand_records": 1000,
+      "max_forecast_slots": 100,
+      "historical_record_limit_reached": false,
+      "forecast_slot_limit_reached": false
+    },
     "horizon": {"days": [0], "shifts": [0], "roles": ["worker"]},
     "forecast": [
       {

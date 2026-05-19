@@ -52,6 +52,8 @@ from .explanations import (
 from .forecasting import (
     FORECAST_CONTRACT_VERSION,
     FORECAST_METHOD_HISTORICAL_AVERAGE,
+    MAX_FORECAST_SLOTS,
+    MAX_HISTORICAL_DEMAND_RECORDS,
     SUPPORTED_FORECAST_METHODS,
     forecast_response_from_request,
 )
@@ -231,6 +233,8 @@ async def metadata() -> dict[str, Any]:
             "forecast_contract_version": FORECAST_CONTRACT_VERSION,
             "default_method": FORECAST_METHOD_HISTORICAL_AVERAGE,
             "supported_methods": list(SUPPORTED_FORECAST_METHODS),
+            "max_historical_demand_records": MAX_HISTORICAL_DEMAND_RECORDS,
+            "max_forecast_slots": MAX_FORECAST_SLOTS,
             "uses_external_ml": False,
             "uses_external_llm": False,
             "will_solve": False,

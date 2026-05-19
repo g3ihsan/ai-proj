@@ -30,6 +30,10 @@ from workforce_scheduling.jobs import (
     SOLVE_JOB_MAX_WORKERS,
     solve_job_executor,
 )
+from workforce_scheduling.forecasting import (
+    MAX_FORECAST_SLOTS,
+    MAX_HISTORICAL_DEMAND_RECORDS,
+)
 from workforce_scheduling.recommendations import (
     ScenarioEvaluationError,
     ScenarioValidationError,
@@ -367,6 +371,8 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "forecast_contract_version": 1,
             "default_method": "historical_average",
             "supported_methods": ["historical_average"],
+            "max_historical_demand_records": MAX_HISTORICAL_DEMAND_RECORDS,
+            "max_forecast_slots": MAX_FORECAST_SLOTS,
             "uses_external_ml": False,
             "uses_external_llm": False,
             "will_solve": False,
@@ -594,6 +600,12 @@ def test_api_forecast_demand_returns_deterministic_baseline() -> None:
     assert result_payload["uses_external_llm"] is False
     assert result_payload["will_solve"] is False
     assert result_payload["will_mutate_solver_request"] is False
+    assert result_payload["limits"] == {
+        "max_historical_demand_records": MAX_HISTORICAL_DEMAND_RECORDS,
+        "max_forecast_slots": MAX_FORECAST_SLOTS,
+        "historical_record_limit_reached": False,
+        "forecast_slot_limit_reached": False,
+    }
     assert result_payload["forecast"] == [
         {
             "day": 0,
@@ -638,7 +650,36 @@ def test_api_forecast_demand_rejects_invalid_history() -> None:
     payload = response.json()
     assert payload["ok"] is False
     assert payload["error"]["type"] == "ForecastValidationError"
-    assert "historical_demand[0].required must be an integer" in payload["error"]["message"]
+    assert (
+        "historical_demand[0].required must be an integer"
+        in payload["error"]["message"]
+    )
+    assert payload["error"]["request_id"]
+
+
+def test_api_forecast_demand_rejects_historical_record_limit() -> None:
+    response = _api_request(
+        "POST",
+        "/forecast/demand",
+        json_payload={
+            "historical_demand": [
+                {
+                    "period": index,
+                    "day": 0,
+                    "shift": 0,
+                    "role": "worker",
+                    "required": 1,
+                }
+                for index in range(MAX_HISTORICAL_DEMAND_RECORDS + 1)
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["type"] == "ForecastValidationError"
+    assert "maximum is 1000" in payload["error"]["message"]
     assert payload["error"]["request_id"]
 
 

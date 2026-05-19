@@ -7,6 +7,8 @@ import pytest
 
 from workforce_scheduling.forecasting import (
     FORECAST_CONTRACT_VERSION,
+    MAX_FORECAST_SLOTS,
+    MAX_HISTORICAL_DEMAND_RECORDS,
     ForecastValidationError,
     forecast_response_from_request,
 )
@@ -42,6 +44,12 @@ def test_forecast_response_uses_deterministic_historical_average() -> None:
     assert response["will_write_files"] is False
     assert response["historical_record_count"] == 4
     assert response["historical_period_count"] == 2
+    assert response["limits"] == {
+        "max_historical_demand_records": MAX_HISTORICAL_DEMAND_RECORDS,
+        "max_forecast_slots": MAX_FORECAST_SLOTS,
+        "historical_record_limit_reached": False,
+        "forecast_slot_limit_reached": False,
+    }
     assert response["horizon"] == {
         "days": [0],
         "shifts": [0, 1, 2],
@@ -180,6 +188,40 @@ def test_forecast_response_derives_horizon_from_history_when_omitted() -> None:
                 ]
             },
             "Duplicate historical demand record",
+        ),
+        (
+            {
+                "historical_demand": [
+                    {
+                        "period": index,
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 1,
+                    }
+                    for index in range(MAX_HISTORICAL_DEMAND_RECORDS + 1)
+                ]
+            },
+            "historical_demand contains 1001 record(s); maximum is 1000",
+        ),
+        (
+            {
+                "historical_demand": [
+                    {
+                        "period": 0,
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 1,
+                    }
+                ],
+                "horizon": {
+                    "days": list(range(10)),
+                    "shifts": list(range(10)),
+                    "roles": ["worker", "supervisor"],
+                },
+            },
+            "Forecast horizon produces 200 slot(s); maximum is 100",
         ),
         (
             {

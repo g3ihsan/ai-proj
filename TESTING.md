@@ -94,7 +94,8 @@ JSON serializability, no file mutation, no solving, and
 `POST /forecast/demand` covers the deterministic demand forecasting foundation.
 Tests assert strict historical demand validation, no bool-as-int acceptance,
 duplicate historical slot rejection, deterministic historical-average forecasts,
-missing-horizon-slot diagnostics, JSON serializability, `uses_external_ml=false`,
+missing-horizon-slot diagnostics, the 1000-record historical demand cap, the
+100-slot forecast horizon cap, JSON serializability, `uses_external_ml=false`,
 `uses_external_llm=false`, `will_solve=false`, and
 `will_mutate_solver_request=false`. Forecasts are planning evidence only and do
 not call `/solve`, `/solve-csv`, or mutate canonical solve requests.
