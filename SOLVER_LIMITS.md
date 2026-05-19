@@ -96,7 +96,9 @@ role, or global fallback, and it never automatically changes solver demand.
 `POST /forecast/demand/preview` converts reviewed forecast rows to canonical
 `day`/`shift`/`role`/`required` demand row shape in memory only. It does not run
 the solver, does not mutate solve requests, does not write files, and does not
-validate staffing feasibility.
+validate staffing feasibility. Preview rows must preserve forecast confidence
+and basis evidence; low-confidence, fallback, and zero-required rows are surfaced
+as warnings for manager review.
 Employee availability should be provided with explicit
 `available_day{day}_shift{shift}` columns so non-technical managers can inspect
 and edit the file without decoding a compact matrix.

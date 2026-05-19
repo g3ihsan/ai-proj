@@ -767,13 +767,66 @@ def test_api_forecast_demand_preview_returns_solver_compatible_rows() -> None:
     assert result_payload["will_solve"] is False
     assert result_payload["will_mutate_solver_request"] is False
     assert result_payload["will_write_files"] is False
+    assert result_payload["summary"] == {
+        "demand_row_count": 2,
+        "total_required": 3,
+        "low_confidence_row_count": 1,
+        "fallback_row_count": 1,
+        "zero_required_row_count": 1,
+        "warning_count": 3,
+    }
+    assert [warning["code"] for warning in result_payload["warnings"]] == [
+        "low_confidence_forecast",
+        "fallback_used",
+        "zero_required_demand",
+    ]
     assert result_payload["demand_rows"] == [
         {"day": 0, "shift": 0, "role": "worker", "required": 3},
         {"day": 0, "shift": 1, "role": "worker", "required": 0},
     ]
+    assert result_payload["row_evidence"] == [
+        {
+            "source_forecast_index": 0,
+            "day": 0,
+            "shift": 0,
+            "role": "worker",
+            "required": 3,
+            "confidence": "medium",
+            "basis": {
+                "method": "historical_average",
+                "match_level": "exact_day_shift_role",
+                "observation_count": 2,
+                "mean_required": 3.0,
+                "fallback_used": False,
+            },
+        },
+        {
+            "source_forecast_index": 1,
+            "day": 0,
+            "shift": 1,
+            "role": "worker",
+            "required": 0,
+            "confidence": "low",
+            "basis": {
+                "method": "historical_average",
+                "match_level": "none",
+                "observation_count": 0,
+                "mean_required": 0.0,
+                "fallback_used": True,
+                "fallback_reason": "no_exact_history",
+            },
+        },
+    ]
     assert result_payload["traceability"] == {
         "source_forecast_row_count": 2,
-        "source_fields_used": ["day", "shift", "role", "required"],
+        "source_fields_used": [
+            "day",
+            "shift",
+            "role",
+            "required",
+            "confidence",
+            "basis",
+        ],
         "preserves_solver_contract": True,
         "row_semantics_validated": False,
     }

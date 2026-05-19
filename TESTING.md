@@ -103,8 +103,9 @@ not call `/solve`, `/solve-csv`, or mutate canonical solve requests.
 `POST /forecast/demand/preview` covers deterministic conversion of forecast rows
 into canonical solver demand row shape. Tests assert both full forecast-response
 and direct row-list request shapes, row-shape validation, duplicate demand slot
-rejection, JSON serializability, deterministic output, no solving, no file
-writing, and no solve-request mutation.
+rejection, confidence and basis validation, row evidence, warning summaries,
+JSON serializability, deterministic output, no solving, no file writing, and no
+solve-request mutation.
 
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:

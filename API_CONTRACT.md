@@ -1084,7 +1084,20 @@ Accepted request shapes:
   "forecast": {
     "type": "demand_forecast",
     "forecast": [
-      {"day": 0, "shift": 0, "role": "worker", "required": 3}
+      {
+        "day": 0,
+        "shift": 0,
+        "role": "worker",
+        "required": 3,
+        "confidence": "medium",
+        "basis": {
+          "method": "historical_average",
+          "match_level": "exact_day_shift_role",
+          "observation_count": 2,
+          "mean_required": 3.0,
+          "fallback_used": false
+        }
+      }
     ]
   }
 }
@@ -1093,7 +1106,20 @@ Accepted request shapes:
 ```json
 {
   "forecast_rows": [
-    {"day": 0, "shift": 0, "role": "worker", "required": 3}
+    {
+      "day": 0,
+      "shift": 0,
+      "role": "worker",
+      "required": 3,
+      "confidence": "medium",
+      "basis": {
+        "method": "historical_average",
+        "match_level": "exact_day_shift_role",
+        "observation_count": 2,
+        "mean_required": 3.0,
+        "fallback_used": false
+      }
+    }
   ]
 }
 ```
@@ -1115,12 +1141,45 @@ Response:
     "will_write_files": false,
     "row_count": 1,
     "total_required": 3,
+    "summary": {
+      "demand_row_count": 1,
+      "total_required": 3,
+      "low_confidence_row_count": 0,
+      "fallback_row_count": 0,
+      "zero_required_row_count": 0,
+      "warning_count": 0
+    },
+    "warnings": [],
     "demand_rows": [
       {"day": 0, "shift": 0, "role": "worker", "required": 3}
     ],
+    "row_evidence": [
+      {
+        "source_forecast_index": 0,
+        "day": 0,
+        "shift": 0,
+        "role": "worker",
+        "required": 3,
+        "confidence": "medium",
+        "basis": {
+          "method": "historical_average",
+          "match_level": "exact_day_shift_role",
+          "observation_count": 2,
+          "mean_required": 3.0,
+          "fallback_used": false
+        }
+      }
+    ],
     "traceability": {
       "source_forecast_row_count": 1,
-      "source_fields_used": ["day", "shift", "role", "required"],
+      "source_fields_used": [
+        "day",
+        "shift",
+        "role",
+        "required",
+        "confidence",
+        "basis"
+      ],
       "preserves_solver_contract": true,
       "row_semantics_validated": false
     }
@@ -1129,9 +1188,11 @@ Response:
 ```
 
 The preview validates row shape, integer fields, non-empty roles, non-negative
-`required`, and duplicate `day`/`shift`/`role` slots. It does not validate full
-solver semantics or staffing feasibility; `/solve` and `/solve-csv` remain the
-only scheduling paths.
+`required`, duplicate `day`/`shift`/`role` slots, confidence values, and basis
+metadata. Warnings are emitted for low-confidence rows, fallback rows, and rows
+that convert to `required=0`. It does not validate full solver semantics or
+staffing feasibility; `/solve` and `/solve-csv` remain the only scheduling
+paths.
 
 ### `POST /solve-csv`
 

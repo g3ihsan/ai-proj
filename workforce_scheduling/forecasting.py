@@ -14,6 +14,18 @@ MAX_FORECAST_SLOTS = 100
 FORECAST_MATCH_EXACT = "exact_day_shift_role"
 FORECAST_MATCH_NONE = "none"
 FORECAST_FALLBACK_REASON_NO_EXACT_HISTORY = "no_exact_history"
+FORECAST_CONFIDENCE_HIGH = "high"
+FORECAST_CONFIDENCE_MEDIUM = "medium"
+FORECAST_CONFIDENCE_LOW = "low"
+SUPPORTED_FORECAST_CONFIDENCE_LEVELS = (
+    FORECAST_CONFIDENCE_HIGH,
+    FORECAST_CONFIDENCE_MEDIUM,
+    FORECAST_CONFIDENCE_LOW,
+)
+SUPPORTED_FORECAST_MATCH_LEVELS = (
+    FORECAST_MATCH_EXACT,
+    FORECAST_MATCH_NONE,
+)
 
 
 class ForecastingError(ValueError):
@@ -27,7 +39,9 @@ class ForecastValidationError(ForecastingError):
 def forecast_to_demand_preview(payload: Mapping[str, Any]) -> dict[str, Any]:
     preview_request = validate_forecast_to_demand_request(payload)
     forecast_rows = preview_request["forecast_rows"]
-    demand_rows = demand_rows_from_forecast(forecast_rows)
+    row_evidence = row_evidence_from_forecast(forecast_rows)
+    demand_rows = _demand_rows_from_evidence(row_evidence)
+    warnings = forecast_to_demand_warnings(row_evidence)
     total_required = sum(row["required"] for row in demand_rows)
 
     return {
@@ -42,10 +56,39 @@ def forecast_to_demand_preview(payload: Mapping[str, Any]) -> dict[str, Any]:
         "will_write_files": False,
         "row_count": len(demand_rows),
         "total_required": total_required,
+        "summary": {
+            "demand_row_count": len(demand_rows),
+            "total_required": total_required,
+            "low_confidence_row_count": sum(
+                1
+                for evidence in row_evidence
+                if evidence["confidence"] == FORECAST_CONFIDENCE_LOW
+            ),
+            "fallback_row_count": sum(
+                1
+                for evidence in row_evidence
+                if bool(evidence["basis"]["fallback_used"])
+            ),
+            "zero_required_row_count": sum(
+                1
+                for row in demand_rows
+                if row["required"] == 0
+            ),
+            "warning_count": len(warnings),
+        },
+        "warnings": warnings,
         "demand_rows": demand_rows,
+        "row_evidence": row_evidence,
         "traceability": {
             "source_forecast_row_count": len(forecast_rows),
-            "source_fields_used": ["day", "shift", "role", "required"],
+            "source_fields_used": [
+                "day",
+                "shift",
+                "role",
+                "required",
+                "confidence",
+                "basis",
+            ],
             "preserves_solver_contract": True,
             "row_semantics_validated": False,
         },
@@ -55,19 +98,20 @@ def forecast_to_demand_preview(payload: Mapping[str, Any]) -> dict[str, Any]:
 def demand_rows_from_forecast(
     forecast_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    return _demand_rows_from_evidence(row_evidence_from_forecast(forecast_rows))
+
+
+def _demand_rows_from_evidence(
+    row_evidence: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     demand_rows: list[dict[str, Any]] = []
     seen_slots: set[tuple[int, int, str]] = set()
-    for index, forecast_row in enumerate(forecast_rows):
-        row = _require_mapping(forecast_row, f"forecast[{index}]")
+    for evidence in row_evidence:
         demand_row = {
-            "day": _required_forecast_row_non_negative_int(row, "day", index),
-            "shift": _required_forecast_row_non_negative_int(row, "shift", index),
-            "role": _required_forecast_row_non_empty_string(row, "role", index),
-            "required": _required_forecast_row_non_negative_int(
-                row,
-                "required",
-                index,
-            ),
+            "day": evidence["day"],
+            "shift": evidence["shift"],
+            "role": evidence["role"],
+            "required": evidence["required"],
         }
         slot_key = (
             demand_row["day"],
@@ -82,6 +126,77 @@ def demand_rows_from_forecast(
         seen_slots.add(slot_key)
         demand_rows.append(demand_row)
     return demand_rows
+
+
+def row_evidence_from_forecast(
+    forecast_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    evidence_rows: list[dict[str, Any]] = []
+    for index, forecast_row in enumerate(forecast_rows):
+        row = _require_mapping(forecast_row, f"forecast[{index}]")
+        day = _required_forecast_row_non_negative_int(row, "day", index)
+        shift = _required_forecast_row_non_negative_int(row, "shift", index)
+        role = _required_forecast_row_non_empty_string(row, "role", index)
+        required = _required_forecast_row_non_negative_int(row, "required", index)
+        confidence = _required_forecast_row_confidence(row, index)
+        basis = _required_forecast_row_basis(row, index)
+        _validate_forecast_row_confidence_matches_basis(
+            confidence=confidence,
+            basis=basis,
+            index=index,
+        )
+        evidence_rows.append(
+            {
+                "source_forecast_index": index,
+                "day": day,
+                "shift": shift,
+                "role": role,
+                "required": required,
+                "confidence": confidence,
+                "basis": basis,
+            }
+        )
+    return evidence_rows
+
+
+def forecast_to_demand_warnings(row_evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    for evidence in row_evidence:
+        source_index = evidence["source_forecast_index"]
+        if evidence["confidence"] == FORECAST_CONFIDENCE_LOW:
+            warnings.append(
+                {
+                    "source_forecast_index": source_index,
+                    "code": "low_confidence_forecast",
+                    "message": (
+                        "Forecast row has low confidence and should be reviewed "
+                        "before converting to solver demand."
+                    ),
+                }
+            )
+        if bool(evidence["basis"]["fallback_used"]):
+            warnings.append(
+                {
+                    "source_forecast_index": source_index,
+                    "code": "fallback_used",
+                    "message": (
+                        "Forecast row used fallback demand because no exact "
+                        "historical day/shift/role match was available."
+                    ),
+                }
+            )
+        if evidence["required"] == 0:
+            warnings.append(
+                {
+                    "source_forecast_index": source_index,
+                    "code": "zero_required_demand",
+                    "message": (
+                        "Forecast row converts to required=0 and may need "
+                        "manager review before replacing demand."
+                    ),
+                }
+            )
+    return warnings
 
 
 def validate_forecast_to_demand_request(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -390,10 +505,10 @@ def _forecast_slot_count(horizon: Mapping[str, list[int] | list[str]]) -> int:
 
 def _forecast_confidence(observation_count: int) -> str:
     if observation_count >= 4:
-        return "high"
+        return FORECAST_CONFIDENCE_HIGH
     if observation_count >= 2:
-        return "medium"
-    return "low"
+        return FORECAST_CONFIDENCE_MEDIUM
+    return FORECAST_CONFIDENCE_LOW
 
 
 def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:
@@ -462,6 +577,163 @@ def _required_forecast_row_non_empty_string(
             f"forecast[{index}].{key} must be a non-empty string"
         )
     return value.strip()
+
+
+def _required_forecast_row_confidence(
+    row: Mapping[str, Any],
+    index: int,
+) -> str:
+    if "confidence" not in row:
+        raise ForecastValidationError(f"Missing forecast[{index}].confidence")
+    value = row["confidence"]
+    if not isinstance(value, str) or not value.strip():
+        raise ForecastValidationError(
+            f"forecast[{index}].confidence must be a non-empty string"
+        )
+    confidence = value.strip()
+    if confidence not in SUPPORTED_FORECAST_CONFIDENCE_LEVELS:
+        raise ForecastValidationError(
+            f"forecast[{index}].confidence must be one of "
+            f"{list(SUPPORTED_FORECAST_CONFIDENCE_LEVELS)}"
+        )
+    return confidence
+
+
+def _required_forecast_row_basis(
+    row: Mapping[str, Any],
+    index: int,
+) -> dict[str, Any]:
+    if "basis" not in row:
+        raise ForecastValidationError(f"Missing forecast[{index}].basis")
+    basis = _require_mapping(row["basis"], f"forecast[{index}].basis")
+    method = _required_basis_string(basis, "method", index)
+    if method != FORECAST_METHOD_HISTORICAL_AVERAGE:
+        raise ForecastValidationError(
+            f"forecast[{index}].basis.method must be {FORECAST_METHOD_HISTORICAL_AVERAGE}"
+        )
+    match_level = _required_basis_string(basis, "match_level", index)
+    if match_level not in SUPPORTED_FORECAST_MATCH_LEVELS:
+        raise ForecastValidationError(
+            f"forecast[{index}].basis.match_level must be one of "
+            f"{list(SUPPORTED_FORECAST_MATCH_LEVELS)}"
+        )
+    observation_count = _required_basis_non_negative_int(
+        basis,
+        "observation_count",
+        index,
+    )
+    mean_required = _required_basis_non_negative_number(
+        basis,
+        "mean_required",
+        index,
+    )
+    fallback_used = _required_basis_bool(basis, "fallback_used", index)
+    parsed: dict[str, Any] = {
+        "method": method,
+        "match_level": match_level,
+        "observation_count": observation_count,
+        "mean_required": mean_required,
+        "fallback_used": fallback_used,
+    }
+
+    if fallback_used:
+        fallback_reason = _required_basis_string(basis, "fallback_reason", index)
+        if fallback_reason != FORECAST_FALLBACK_REASON_NO_EXACT_HISTORY:
+            raise ForecastValidationError(
+                f"forecast[{index}].basis.fallback_reason must be "
+                f"{FORECAST_FALLBACK_REASON_NO_EXACT_HISTORY}"
+            )
+        if match_level != FORECAST_MATCH_NONE:
+            raise ForecastValidationError(
+                f"forecast[{index}].basis.match_level must be none when "
+                "fallback_used is true"
+            )
+        if observation_count != 0:
+            raise ForecastValidationError(
+                f"forecast[{index}].basis.observation_count must be 0 when "
+                "fallback_used is true"
+            )
+        parsed["fallback_reason"] = fallback_reason
+    elif match_level != FORECAST_MATCH_EXACT:
+        raise ForecastValidationError(
+            f"forecast[{index}].basis.match_level must be exact_day_shift_role "
+            "when fallback_used is false"
+        )
+
+    return parsed
+
+
+def _required_basis_string(
+    basis: Mapping[str, Any],
+    key: str,
+    index: int,
+) -> str:
+    if key not in basis:
+        raise ForecastValidationError(f"Missing forecast[{index}].basis.{key}")
+    value = basis[key]
+    if not isinstance(value, str) or not value.strip():
+        raise ForecastValidationError(
+            f"forecast[{index}].basis.{key} must be a non-empty string"
+        )
+    return value.strip()
+
+
+def _required_basis_non_negative_int(
+    basis: Mapping[str, Any],
+    key: str,
+    index: int,
+) -> int:
+    if key not in basis:
+        raise ForecastValidationError(f"Missing forecast[{index}].basis.{key}")
+    return _non_negative_int(basis[key], f"forecast[{index}].basis.{key}")
+
+
+def _required_basis_non_negative_number(
+    basis: Mapping[str, Any],
+    key: str,
+    index: int,
+) -> float:
+    if key not in basis:
+        raise ForecastValidationError(f"Missing forecast[{index}].basis.{key}")
+    value = basis[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ForecastValidationError(
+            f"forecast[{index}].basis.{key} must be a number"
+        )
+    if value < 0:
+        raise ForecastValidationError(
+            f"forecast[{index}].basis.{key} must be non-negative"
+        )
+    return round(float(value), 4)
+
+
+def _required_basis_bool(
+    basis: Mapping[str, Any],
+    key: str,
+    index: int,
+) -> bool:
+    if key not in basis:
+        raise ForecastValidationError(f"Missing forecast[{index}].basis.{key}")
+    value = basis[key]
+    if not isinstance(value, bool):
+        raise ForecastValidationError(
+            f"forecast[{index}].basis.{key} must be a boolean"
+        )
+    return value
+
+
+def _validate_forecast_row_confidence_matches_basis(
+    *,
+    confidence: str,
+    basis: Mapping[str, Any],
+    index: int,
+) -> None:
+    expected_confidence = _forecast_confidence(int(basis["observation_count"]))
+    if confidence != expected_confidence:
+        raise ForecastValidationError(
+            f"forecast[{index}].confidence must match basis.observation_count "
+            f"({expected_confidence})"
+        )
 
 
 def _round_half_up(value: float) -> int:

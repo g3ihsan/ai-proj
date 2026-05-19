@@ -248,14 +248,103 @@ def test_forecast_to_demand_preview_accepts_full_forecast_response() -> None:
         "will_write_files": False,
         "row_count": 3,
         "total_required": 5,
+        "summary": {
+            "demand_row_count": 3,
+            "total_required": 5,
+            "low_confidence_row_count": 1,
+            "fallback_row_count": 1,
+            "zero_required_row_count": 1,
+            "warning_count": 3,
+        },
+        "warnings": [
+            {
+                "source_forecast_index": 2,
+                "code": "low_confidence_forecast",
+                "message": (
+                    "Forecast row has low confidence and should be reviewed "
+                    "before converting to solver demand."
+                ),
+            },
+            {
+                "source_forecast_index": 2,
+                "code": "fallback_used",
+                "message": (
+                    "Forecast row used fallback demand because no exact "
+                    "historical day/shift/role match was available."
+                ),
+            },
+            {
+                "source_forecast_index": 2,
+                "code": "zero_required_demand",
+                "message": (
+                    "Forecast row converts to required=0 and may need "
+                    "manager review before replacing demand."
+                ),
+            },
+        ],
         "demand_rows": [
             {"day": 0, "shift": 0, "role": "worker", "required": 3},
             {"day": 0, "shift": 1, "role": "worker", "required": 2},
             {"day": 0, "shift": 2, "role": "worker", "required": 0},
         ],
+        "row_evidence": [
+            {
+                "source_forecast_index": 0,
+                "day": 0,
+                "shift": 0,
+                "role": "worker",
+                "required": 3,
+                "confidence": "medium",
+                "basis": {
+                    "method": "historical_average",
+                    "match_level": "exact_day_shift_role",
+                    "observation_count": 2,
+                    "mean_required": 3.0,
+                    "fallback_used": False,
+                },
+            },
+            {
+                "source_forecast_index": 1,
+                "day": 0,
+                "shift": 1,
+                "role": "worker",
+                "required": 2,
+                "confidence": "medium",
+                "basis": {
+                    "method": "historical_average",
+                    "match_level": "exact_day_shift_role",
+                    "observation_count": 2,
+                    "mean_required": 2.0,
+                    "fallback_used": False,
+                },
+            },
+            {
+                "source_forecast_index": 2,
+                "day": 0,
+                "shift": 2,
+                "role": "worker",
+                "required": 0,
+                "confidence": "low",
+                "basis": {
+                    "method": "historical_average",
+                    "match_level": "none",
+                    "observation_count": 0,
+                    "mean_required": 0.0,
+                    "fallback_used": True,
+                    "fallback_reason": "no_exact_history",
+                },
+            },
+        ],
         "traceability": {
             "source_forecast_row_count": 3,
-            "source_fields_used": ["day", "shift", "role", "required"],
+            "source_fields_used": [
+                "day",
+                "shift",
+                "role",
+                "required",
+                "confidence",
+                "basis",
+            ],
             "preserves_solver_contract": True,
             "row_semantics_validated": False,
         },
@@ -269,10 +358,38 @@ def test_forecast_to_demand_preview_accepts_direct_forecast_rows() -> None:
     preview = forecast_to_demand_preview({"forecast_rows": forecast_rows})
 
     assert preview["input_shape"] == "forecast_rows"
+    assert preview["summary"] == {
+        "demand_row_count": 3,
+        "total_required": 5,
+        "low_confidence_row_count": 1,
+        "fallback_row_count": 1,
+        "zero_required_row_count": 1,
+        "warning_count": 3,
+    }
     assert preview["demand_rows"] == [
         {"day": 0, "shift": 0, "role": "worker", "required": 3},
         {"day": 0, "shift": 1, "role": "worker", "required": 2},
         {"day": 0, "shift": 2, "role": "worker", "required": 0},
+    ]
+    assert preview["row_evidence"][0] == {
+        "source_forecast_index": 0,
+        "day": 0,
+        "shift": 0,
+        "role": "worker",
+        "required": 3,
+        "confidence": "medium",
+        "basis": {
+            "method": "historical_average",
+            "match_level": "exact_day_shift_role",
+            "observation_count": 2,
+            "mean_required": 3.0,
+            "fallback_used": False,
+        },
+    }
+    assert [warning["code"] for warning in preview["warnings"]] == [
+        "low_confidence_forecast",
+        "fallback_used",
+        "zero_required_demand",
     ]
 
 
@@ -306,7 +423,13 @@ def test_demand_rows_from_forecast_returns_canonical_solver_demand_rows() -> Non
             "role": " supervisor ",
             "required": 3,
             "confidence": "medium",
-            "basis": {"method": "historical_average"},
+            "basis": {
+                "method": "historical_average",
+                "match_level": "exact_day_shift_role",
+                "observation_count": 2,
+                "mean_required": 3.0,
+                "fallback_used": False,
+            },
         }
     ]
 
@@ -629,8 +752,141 @@ def test_forecast_request_validation_errors(payload: dict, message: str) -> None
         (
             {
                 "forecast_rows": [
-                    {"day": 0, "shift": 0, "role": "worker", "required": 1},
-                    {"day": 0, "shift": 0, "role": "worker", "required": 2},
+                    {"day": 0, "shift": 0, "role": "worker", "required": 1}
+                ]
+            },
+            "Missing forecast[0].confidence",
+        ),
+        (
+            {
+                "forecast_rows": [
+                    {
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 1,
+                        "confidence": "medium",
+                    }
+                ]
+            },
+            "Missing forecast[0].basis",
+        ),
+        (
+            {
+                "forecast_rows": [
+                    {
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 1,
+                        "confidence": "certain",
+                        "basis": {
+                            "method": "historical_average",
+                            "match_level": "exact_day_shift_role",
+                            "observation_count": 2,
+                            "mean_required": 1.0,
+                            "fallback_used": False,
+                        },
+                    }
+                ]
+            },
+            "forecast[0].confidence must be one of",
+        ),
+        (
+            {
+                "forecast_rows": [
+                    {
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 1,
+                        "confidence": "high",
+                        "basis": {
+                            "method": "historical_average",
+                            "match_level": "exact_day_shift_role",
+                            "observation_count": 2,
+                            "mean_required": 1.0,
+                            "fallback_used": False,
+                        },
+                    }
+                ]
+            },
+            "confidence must match basis.observation_count (medium)",
+        ),
+        (
+            {
+                "forecast_rows": [
+                    {
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 0,
+                        "confidence": "low",
+                        "basis": {
+                            "method": "historical_average",
+                            "match_level": "none",
+                            "observation_count": 0,
+                            "mean_required": 0.0,
+                            "fallback_used": True,
+                        },
+                    }
+                ]
+            },
+            "Missing forecast[0].basis.fallback_reason",
+        ),
+        (
+            {
+                "forecast_rows": [
+                    {
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 0,
+                        "confidence": "low",
+                        "basis": {
+                            "method": "historical_average",
+                            "match_level": "exact_day_shift_role",
+                            "observation_count": 0,
+                            "mean_required": 0.0,
+                            "fallback_used": True,
+                            "fallback_reason": "no_exact_history",
+                        },
+                    }
+                ]
+            },
+            "basis.match_level must be none when fallback_used is true",
+        ),
+        (
+            {
+                "forecast_rows": [
+                    {
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 1,
+                        "confidence": "medium",
+                        "basis": {
+                            "method": "historical_average",
+                            "match_level": "exact_day_shift_role",
+                            "observation_count": 2,
+                            "mean_required": 1.0,
+                            "fallback_used": False,
+                        },
+                    },
+                    {
+                        "day": 0,
+                        "shift": 0,
+                        "role": "worker",
+                        "required": 2,
+                        "confidence": "medium",
+                        "basis": {
+                            "method": "historical_average",
+                            "match_level": "exact_day_shift_role",
+                            "observation_count": 2,
+                            "mean_required": 2.0,
+                            "fallback_used": False,
+                        },
+                    },
                 ]
             },
             "Duplicate forecast demand slot",
