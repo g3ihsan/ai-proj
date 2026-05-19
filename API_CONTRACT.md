@@ -1244,6 +1244,7 @@ Response:
     "forecast_contract_version": 1,
     "source": "deterministic_forecast_demand_apply_plan",
     "policy": "merge_forecast_over_existing",
+    "supported_policies": ["merge_forecast_over_existing"],
     "input_shape": {
       "forecast_demand": "forecast_demand_preview",
       "existing_demand": "existing_demand"
@@ -1299,11 +1300,11 @@ Response:
 }
 ```
 
-The apply plan validates demand-row shape, rejects duplicate
-`day`/`shift`/`role` slots in both forecast and existing demand, and returns
-`can_apply=false` because this phase is preview-only. Existing slots without
-forecast rows are retained and reported as warnings. Solver feasibility is not
-checked here.
+The apply plan reports `supported_policies=["merge_forecast_over_existing"]`,
+validates demand-row shape, rejects duplicate `day`/`shift`/`role` slots in both
+forecast and existing demand, and returns `can_apply=false` because this phase
+is preview-only. Existing slots without forecast rows are retained and reported
+as warnings. Solver feasibility is not checked here.
 
 ### `POST /solve-csv`
 

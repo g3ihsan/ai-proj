@@ -54,6 +54,7 @@ from .forecasting import (
     FORECAST_METHOD_HISTORICAL_AVERAGE,
     MAX_FORECAST_SLOTS,
     MAX_HISTORICAL_DEMAND_RECORDS,
+    SUPPORTED_FORECAST_APPLY_POLICIES,
     SUPPORTED_FORECAST_METHODS,
     forecast_demand_apply_plan,
     forecast_response_from_request,
@@ -256,6 +257,7 @@ async def metadata() -> dict[str, Any]:
             "forecast_demand_apply_plan": {
                 "endpoint": "POST /forecast/demand/apply-plan",
                 "policy": "merge_forecast_over_existing",
+                "supported_policies": list(SUPPORTED_FORECAST_APPLY_POLICIES),
                 "will_solve": False,
                 "will_mutate_solver_request": False,
                 "will_write_files": False,

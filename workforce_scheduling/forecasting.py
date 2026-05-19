@@ -13,6 +13,7 @@ SUPPORTED_FORECAST_METHODS = (FORECAST_METHOD_HISTORICAL_AVERAGE,)
 MAX_HISTORICAL_DEMAND_RECORDS = 1000
 MAX_FORECAST_SLOTS = 100
 FORECAST_APPLY_POLICY_MERGE = "merge_forecast_over_existing"
+SUPPORTED_FORECAST_APPLY_POLICIES = (FORECAST_APPLY_POLICY_MERGE,)
 FORECAST_MATCH_EXACT = "exact_day_shift_role"
 FORECAST_MATCH_NONE = "none"
 FORECAST_FALLBACK_REASON_NO_EXACT_HISTORY = "no_exact_history"
@@ -69,6 +70,7 @@ def build_forecast_demand_apply_plan(
         "forecast_contract_version": FORECAST_CONTRACT_VERSION,
         "source": "deterministic_forecast_demand_apply_plan",
         "policy": policy,
+        "supported_policies": list(SUPPORTED_FORECAST_APPLY_POLICIES),
         "input_shape": {
             "forecast_demand": forecast_input_shape,
             "existing_demand": existing_input_shape,
@@ -186,7 +188,7 @@ def validate_forecast_demand_apply_plan_request(
 ) -> dict[str, Any]:
     request = _require_mapping(payload, "Forecast demand apply-plan request")
     policy = request.get("policy", FORECAST_APPLY_POLICY_MERGE)
-    if policy != FORECAST_APPLY_POLICY_MERGE:
+    if policy not in SUPPORTED_FORECAST_APPLY_POLICIES:
         raise ForecastValidationError(
             f"Unsupported forecast demand apply policy {policy}"
         )

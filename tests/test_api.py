@@ -33,6 +33,7 @@ from workforce_scheduling.jobs import (
 from workforce_scheduling.forecasting import (
     MAX_FORECAST_SLOTS,
     MAX_HISTORICAL_DEMAND_RECORDS,
+    SUPPORTED_FORECAST_APPLY_POLICIES,
 )
 from workforce_scheduling.recommendations import (
     ScenarioEvaluationError,
@@ -392,6 +393,7 @@ def test_api_metadata_endpoint_reports_contract_without_solving() -> None:
             "forecast_demand_apply_plan": {
                 "endpoint": "POST /forecast/demand/apply-plan",
                 "policy": "merge_forecast_over_existing",
+                "supported_policies": list(SUPPORTED_FORECAST_APPLY_POLICIES),
                 "will_solve": False,
                 "will_mutate_solver_request": False,
                 "will_write_files": False,
@@ -933,6 +935,9 @@ def test_api_forecast_demand_apply_plan_returns_preview_only_plan() -> None:
     result_payload = envelope["result"]
     assert result_payload["type"] == "forecast_demand_apply_plan"
     assert result_payload["policy"] == "merge_forecast_over_existing"
+    assert result_payload["supported_policies"] == [
+        "merge_forecast_over_existing"
+    ]
     assert result_payload["uses_external_ml"] is False
     assert result_payload["uses_external_llm"] is False
     assert result_payload["will_solve"] is False

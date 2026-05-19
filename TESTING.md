@@ -110,7 +110,8 @@ solve-request mutation.
 forecast-derived demand rows and existing demand. Tests assert update, add,
 unchanged, and retain-existing actions, preview-only safety flags,
 solve-request non-mutation, duplicate slot rejection, unsupported policy
-rejection, deterministic output, and no solving or file writing.
+rejection, `supported_policies=["merge_forecast_over_existing"]`,
+deterministic output, and no solving or file writing.
 
 In `shifts.csv`, `shift` is the zero-based shift id and `shift_name` is the
 manager-facing label written to roster output. Shift ids must be consecutive:

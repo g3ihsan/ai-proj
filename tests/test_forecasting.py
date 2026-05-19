@@ -10,6 +10,7 @@ from workforce_scheduling.forecasting import (
     MAX_FORECAST_SLOTS,
     MAX_HISTORICAL_DEMAND_RECORDS,
     ForecastValidationError,
+    SUPPORTED_FORECAST_APPLY_POLICIES,
     compare_demand_rows,
     demand_rows_from_forecast,
     forecast_demand_apply_plan,
@@ -461,6 +462,7 @@ def test_forecast_demand_apply_plan_compares_preview_to_existing_demand() -> Non
         "forecast_contract_version": FORECAST_CONTRACT_VERSION,
         "source": "deterministic_forecast_demand_apply_plan",
         "policy": "merge_forecast_over_existing",
+        "supported_policies": list(SUPPORTED_FORECAST_APPLY_POLICIES),
         "input_shape": {
             "forecast_demand": "forecast_demand_preview",
             "existing_demand": "existing_demand",
@@ -610,6 +612,7 @@ def test_forecast_demand_apply_plan_accepts_solve_request_without_mutation() -> 
         "forecast_demand": "forecast_demand_rows",
         "existing_demand": "solve_request",
     }
+    assert apply_plan["supported_policies"] == ["merge_forecast_over_existing"]
     assert apply_plan["comparison"]["update"][0]["delta_required"] == 1
     assert apply_plan["will_solve"] is False
     assert apply_plan["will_mutate_solver_request"] is False
